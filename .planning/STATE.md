@@ -2,18 +2,18 @@
 
 ## Current Position
 - **Current Phase:** 03
-- **Current Plan:** 1/2
-- **Status:** In progress
-- **Last session:** 2026-02-27T17:45:00Z
-- **Stopped at:** Completed 03-01-PLAN.md (structural validation module)
+- **Current Plan:** 2/2
+- **Status:** Phase complete
+- **Last session:** 2026-02-27T17:50:00Z
+- **Stopped at:** Completed 03-02-PLAN.md (HL cohort verification)
 
 ## Progress
 
 ```
 Phase 1: ████░░░░░░░░░░░░░░░░ 1/2 plans (50%)
 Phase 2: ████████████████████ 1/1 plans (100%)
-Phase 3: ██████████░░░░░░░░░░ 1/2 plans (50%)
-Overall: ████████░░░░░░░░░░░░ 3/? plans
+Phase 3: ████████████████████ 2/2 plans (100%)
+Overall: ████████████░░░░░░░░ 4/? plans
 ```
 
 ## Decisions
@@ -31,6 +31,10 @@ Overall: ████████░░░░░░░░░░░░ 3/? plans
 - Partner column fallback: SOURCE → SITE → overall completeness
 - Missing value classifier counts NI/UN/OT/empty/null per string column
 - Per-table completeness heatmap capped at 20 columns in markdown; full data in CSV
+- Cohort section added as Section 5 (not 4) since Plan 01 created 4 existing sections
+- DX format auto-detection samples 1000 records to choose dotted vs normalized code set
+- ICD version classification uses normalized _DX_MATCH column for consistent prefix matching
+- build_cohort_summary_df produces per-patient CSV with method membership, ICD flag, DX date range
 
 ## Blockers
 None.
@@ -42,3 +46,4 @@ None.
 | 01    | 01   | ~8min    | 2     | 10    |
 | 02    | 01   | ~6min    | 2     | 2     |
 | 03    | 01   | ~8min    | 2     | 3     |
+| 03    | 02   | ~8min    | 2     | 2     |
