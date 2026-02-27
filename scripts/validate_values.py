@@ -470,10 +470,10 @@ def _section_valueset(report_data: dict) -> str:
         for flag_col, count in sorted(code_flags.items()):
             field = flag_col.replace("_val_code", "")
             rate = count / max(total, 1) * 100
-            marker = " **" if rate > 5 else ""
+            highlight = " ⚠ >5%" if rate > 5 else ""
             lines.append(
                 f"| {field} | {flag_small_cell(count)} | {total:,} "
-                f"| {rate:.2f}%{marker} |"
+                f"| {rate:.2f}%{highlight} |"
             )
         lines.append("")
 
