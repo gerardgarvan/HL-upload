@@ -269,6 +269,12 @@ Plans:
 - `reports/cohort_summary.csv` — HL cohort breakdown (ICD version, partner, date range)
 - `src/validate/structural.py` — validation script
 
+**Plans:** 2 plans
+
+Plans:
+- [ ] 03-01-PLAN.md — Structural validation module (schema, integrity, completeness) + report framework
+- [ ] 03-02-PLAN.md — HL cohort verification (149 ICD codes, dual-date methods, enrollment cross-check)
+
 ---
 
 ### Phase 4: HL-Specific Value & Temporal Validation
