@@ -1,18 +1,19 @@
 # Project State
 
 ## Current Position
-- **Current Phase:** 02
-- **Current Plan:** Not started
-- **Status:** Milestone complete
-- **Last session:** 2026-02-27T22:08:00.979Z
-- **Stopped at:** Phase 3 context gathered
+- **Current Phase:** 03
+- **Current Plan:** 1/2
+- **Status:** In progress
+- **Last session:** 2026-02-27T17:45:00Z
+- **Stopped at:** Completed 03-01-PLAN.md (structural validation module)
 
 ## Progress
 
 ```
 Phase 1: ████░░░░░░░░░░░░░░░░ 1/2 plans (50%)
 Phase 2: ████████████████████ 1/1 plans (100%)
-Overall: ████░░░░░░░░░░░░░░░░ 2/? plans
+Phase 3: ██████████░░░░░░░░░░ 1/2 plans (50%)
+Overall: ████████░░░░░░░░░░░░ 3/? plans
 ```
 
 ## Decisions
@@ -24,6 +25,12 @@ Overall: ████░░░░░░░░░░░░░░░░ 2/? plans
 - Three date formats: SAS DATE9. (%d%b%Y), SAS DATETIME (%d%b%Y:%H:%M:%S), NAACCR YYYYMMDD (%Y%m%d)
 - No .str.to_uppercase() before %b parsing — chrono is case-insensitive
 - encoding=utf8-lossy for CSV reads to handle non-UTF-8 characters
+- DatasetCoverPage parser is format-adaptive with BOM handling; probes for table name section markers at runtime
+- TUMOR_REGISTRY tables get column-count validation only (NAACCR, not PCORnet CDM)
+- CHP LAB_RESULT_CM ENCOUNTERID exception via skip_partner parameter
+- Partner column fallback: SOURCE → SITE → overall completeness
+- Missing value classifier counts NI/UN/OT/empty/null per string column
+- Per-table completeness heatmap capped at 20 columns in markdown; full data in CSV
 
 ## Blockers
 None.
@@ -34,3 +41,4 @@ None.
 |-------|------|----------|-------|-------|
 | 01    | 01   | ~8min    | 2     | 10    |
 | 02    | 01   | ~6min    | 2     | 2     |
+| 03    | 01   | ~8min    | 2     | 3     |
