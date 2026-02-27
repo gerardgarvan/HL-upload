@@ -215,6 +215,11 @@ Plans:
 - `file_inventory.csv` — table metadata
 - `src/load/convert.py` — conversion script
 
+**Plans:** 1 plan
+
+Plans:
+- [ ] 02-01-PLAN.md — CSV-to-Parquet conversion module and entry point (auto-detect dates, 3 format parsers, 10% threshold, inventory)
+
 ---
 
 ### Phase 3: Structural Validation & HL Cohort Verification
