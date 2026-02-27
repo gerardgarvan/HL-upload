@@ -1,8 +1,10 @@
-"""Structural validation for all OneFlorida+ PCORnet CDM Parquet tables.
+"""Structural validation and HL cohort verification for OneFlorida+ PCORnet CDM.
 
 Compares schemas against DatasetCoverPage, checks PATID/ENCOUNTERID
-referential integrity, profiles per-partner completeness, and generates
-reports/structural_validation.md + reports/completeness_by_partner.csv.
+referential integrity, profiles per-partner completeness, verifies the
+HL cohort (149 ICD codes, dual-date methods, enrollment cross-check),
+and generates reports/structural_validation.md, completeness_by_partner.csv,
+and cohort_summary.csv.
 
 Usage:
     python scripts/validate_all.py [config/paths.toml]
@@ -35,6 +37,12 @@ from src.validate.structural import (
     flag_small_cell,
     parse_cover_page,
     validate_table_schema,
+)
+from src.validate.cohort import (
+    ALL_HL_CODES,
+    verify_hl_cohort,
+    enrollment_crosscheck,
+    build_cohort_summary_df,
 )
 
 import polars as pl
@@ -345,6 +353,202 @@ def _section_missing(missing_df: pl.DataFrame) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Section 5: HL Cohort Verification
+# ---------------------------------------------------------------------------
+
+
+def _section_cohort(
+    cohort_result: dict,
+    enrollment_result: dict | None = None,
+) -> str:
+    """Generate Section 5: HL Cohort Verification."""
+    lines: list[str] = []
+    lines.append("## 5. HL Cohort Verification\n")
+
+    # --- Cohort Definition ---
+    lines.append("### Cohort Definition")
+    lines.append(
+        "Hodgkin Lymphoma patients identified by ICD-10 C81.xx or ICD-9 201.xx "
+        "diagnosis codes at 2+ encounters on different dates. Expected cohort "
+        "size: ~9,331 patients."
+    )
+    lines.append(
+        "Matching: exact set of 149 ICD codes (77 ICD-10 + 72 ICD-9), not "
+        "prefix matching. DX_TYPE not required for matching (per study decision).\n"
+    )
+
+    # --- Code Matching Summary ---
+    lines.append("### Code Matching Summary\n")
+    lines.append("- ICD-10 codes used: 77 (C81.00\u2013C81.9A, subtypes 0/1/2/3/4/7/9, sites 0-9+A)")
+    lines.append("- ICD-9 codes used: 72 (201.00\u2013201.98, subtypes 0/1/2/4/5/6/7/9, sites 0-8)")
+    lines.append(f"- DX format detected: {cohort_result['dx_format']}")
+    lines.append(f"- Total HL diagnosis records: {flag_small_cell(cohort_result['total_hl_records'])}")
+    lines.append(f"- Unique patients with any HL code: {flag_small_cell(cohort_result['unique_patients'])}\n")
+
+    # --- Cohort Counts ---
+    lines.append("### Cohort Counts\n")
+    lines.append("| Method | Patients | Description |")
+    lines.append("|--------|----------|-------------|")
+    lines.append(f"| A: DX_DATE | {flag_small_cell(cohort_result['method_a_count'])} | 2+ distinct DX_DATEs with HL codes |")
+    lines.append(f"| B: ADMIT_DATE | {flag_small_cell(cohort_result['method_b_count'])} | 2+ distinct ADMIT_DATEs from linked encounters |")
+    lines.append(f"| A only | {flag_small_cell(cohort_result['a_only'])} | In Method A but not B |")
+    lines.append(f"| B only | {flag_small_cell(cohort_result['b_only'])} | In Method B but not A |")
+    lines.append(f"| Intersection | {flag_small_cell(cohort_result['intersection'])} | In both methods |")
+    lines.append(f"| Union | {flag_small_cell(cohort_result['union'])} | In either method |")
+    lines.append("| Expected | ~9,331 | From cohort specification |\n")
+
+    # --- Count Mismatch Investigation ---
+    union_count = cohort_result["union"]
+    if union_count != 9331:
+        lines.append("### Count Mismatch Investigation\n")
+        lines.append(f"Union count ({union_count:,}) differs from expected (~9,331).\n")
+
+        if cohort_result["per_partner"]:
+            lines.append("#### Per-Partner Breakdown\n")
+            lines.append("| Partner | HL Patients |")
+            lines.append("|---------|------------|")
+            for partner in sorted(cohort_result["per_partner"].keys()):
+                n = cohort_result["per_partner"][partner]
+                lines.append(f"| {partner} | {flag_small_cell(n)} |")
+            lines.append("")
+
+        if cohort_result["year_breakdown"]:
+            lines.append("#### By Earliest DX Year\n")
+            lines.append("| Year | Patients |")
+            lines.append("|------|----------|")
+            for year in sorted(cohort_result["year_breakdown"].keys()):
+                n = cohort_result["year_breakdown"][year]
+                lines.append(f"| {year} | {flag_small_cell(n)} |")
+            lines.append("")
+
+    # --- Null DX_DATE Impact ---
+    null_records = cohort_result["null_dx_date_records"]
+    null_patients = cohort_result["null_dx_date_patients"]
+    total_records = cohort_result["total_hl_records"]
+    null_pct = round(null_records / max(total_records, 1) * 100, 1)
+    lines.append("### Null DX_DATE Impact\n")
+    lines.append(f"- HL records with null DX_DATE: {flag_small_cell(null_records)} ({null_pct}%)")
+    lines.append(f"- Patients affected: {flag_small_cell(null_patients)}")
+    if null_pct > 5:
+        lines.append(
+            "\nNull DX_DATEs reduce Method A count. Method B may be more "
+            "reliable for these patients."
+        )
+    lines.append("")
+
+    # --- DX_TYPE Mismatches ---
+    dx_mismatches = cohort_result["dx_type_mismatches"]
+    lines.append("### DX_TYPE Mismatches\n")
+    if dx_mismatches.height == 0:
+        lines.append("No DX_TYPE mismatches found.\n")
+    else:
+        lines.append(f"Total mismatches: {dx_mismatches.height}\n")
+        lines.append("| DX | DX_TYPE | Expected Type | Count | Partners |")
+        lines.append("|-----|---------|---------------|-------|----------|")
+
+        summary = (
+            dx_mismatches
+            .group_by("DX", "DX_TYPE", "expected_type")
+            .agg(
+                pl.len().alias("count"),
+                pl.col("SOURCE").unique().alias("partners"),
+            )
+            .sort("count", descending=True)
+            .head(20)
+        )
+        for row in summary.iter_rows(named=True):
+            partners_str = ", ".join(str(p) for p in row["partners"]) if row["partners"] else "—"
+            lines.append(
+                f"| {row['DX']} | {row['DX_TYPE']} | {row['expected_type']} "
+                f"| {flag_small_cell(row['count'])} | {partners_str} |"
+            )
+        lines.append("")
+
+    lines.append("> Per locked decision: DX_TYPE mismatches reported but not used for exclusion.\n")
+
+    # --- ICD Version Distribution ---
+    icd_flags_df = cohort_result["icd_flags"]
+    lines.append("### ICD Version Distribution\n")
+
+    if not icd_flags_df.is_empty():
+        flag_counts = (
+            icd_flags_df
+            .group_by("icd_flag")
+            .agg(pl.len().alias("n"))
+            .sort("icd_flag")
+        )
+        total_flagged = flag_counts["n"].sum()
+        lines.append("| Flag | Patients | % of Cohort |")
+        lines.append("|------|----------|-------------|")
+        for row in flag_counts.iter_rows(named=True):
+            pct = round(row["n"] / max(total_flagged, 1) * 100, 1)
+            lines.append(f"| {row['icd_flag']} | {flag_small_cell(row['n'])} | {pct}% |")
+        lines.append("")
+
+        lines.append(
+            "> **Note:** AMS and UMI mapped ICD-9\u2192ICD-10 for all diagnoses. "
+            "Their ICD10_ONLY counts may include patients whose original codes "
+            "were ICD-9.\n"
+        )
+
+        if cohort_result["icd_by_partner"]:
+            lines.append("#### ICD Version by Partner\n")
+            all_flags = sorted({f for d in cohort_result["icd_by_partner"].values() for f in d})
+            header = "| Partner | " + " | ".join(all_flags) + " | Total |"
+            sep = "|---------|" + "|".join(["------" for _ in all_flags]) + "|-------|"
+            lines.append(header)
+            lines.append(sep)
+            for partner in sorted(cohort_result["icd_by_partner"].keys()):
+                counts = cohort_result["icd_by_partner"][partner]
+                row = f"| {partner} "
+                total = 0
+                for flag in all_flags:
+                    n = counts.get(flag, 0)
+                    total += n
+                    row += f"| {flag_small_cell(n)} "
+                row += f"| {flag_small_cell(total)} |"
+                lines.append(row)
+            lines.append("")
+
+    # --- Enrollment Cross-Check ---
+    if enrollment_result:
+        lines.append("### Enrollment Cross-Check\n")
+        with_enr = enrollment_result["with_enrollment"]
+        without_enr = enrollment_result["without_enrollment"]
+        total_hl = enrollment_result["total_hl"]
+        cov_pct = enrollment_result["coverage_pct"]
+        uncov_pct = round(100 - cov_pct, 2)
+
+        lines.append(f"- HL patients with enrollment records: {flag_small_cell(with_enr)} ({cov_pct}%)")
+        lines.append(f"- HL patients without enrollment: {flag_small_cell(without_enr)} ({uncov_pct}%)\n")
+
+        if enrollment_result.get("uncovered_by_partner"):
+            lines.append("#### Uncovered Patients by Partner\n")
+            lines.append("| Partner | Without Enrollment |")
+            lines.append("|---------|-------------------|")
+            for partner in sorted(enrollment_result["uncovered_by_partner"].keys()):
+                n = enrollment_result["uncovered_by_partner"][partner]
+                lines.append(f"| {partner} | {flag_small_cell(n)} |")
+            lines.append("")
+
+        if enrollment_result.get("coverage_summary_by_partner"):
+            lines.append("#### Coverage Period Summary\n")
+            lines.append("| Partner | Earliest ENR_START | Latest ENR_END | Median Duration (days) |")
+            lines.append("|---------|-------------------|----------------|----------------------|")
+            for partner in sorted(enrollment_result["coverage_summary_by_partner"].keys()):
+                s = enrollment_result["coverage_summary_by_partner"][partner]
+                med = s.get("median_duration_days")
+                med_str = f"{med:.0f}" if med is not None else "N/A"
+                lines.append(
+                    f"| {partner} | {s.get('earliest_start', 'N/A')} "
+                    f"| {s.get('latest_end', 'N/A')} | {med_str} |"
+                )
+            lines.append("")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -507,6 +711,61 @@ def main(config_path: Path | None = None) -> None:
         comp_df.write_csv(csv_path)
         print(f"\n  Completeness CSV: {csv_path}")
 
+    # ----- 5. HL Cohort Verification -----
+    print(f"\n{'─' * 60}")
+    print("  SECTION 5: HL Cohort Verification")
+    print(f"{'─' * 60}")
+
+    cohort_result: dict | None = None
+    enrollment_result: dict | None = None
+    diag_path = table_map.get("DIAGNOSIS")
+    enr_path = table_map.get("ENROLLMENT")
+
+    if diag_path and diag_path.exists() and enc_path and enc_path.exists():
+        print(f"  DIAGNOSIS: {diag_path}")
+        print(f"  ENCOUNTER: {enc_path}")
+
+        cohort_result = verify_hl_cohort(diag_path, enc_path)
+
+        print(f"\n  DX format:           {cohort_result['dx_format']}")
+        print(f"  Total HL DX records: {cohort_result['total_hl_records']:,}")
+        print(f"  Unique HL patients:  {cohort_result['unique_patients']:,}")
+        print(f"  Method A (DX_DATE):  {cohort_result['method_a_count']:,}")
+        print(f"  Method B (ADMIT_DATE): {cohort_result['method_b_count']:,}")
+        print(f"  Union cohort:        {cohort_result['union']:,}  (expected ~9,331)")
+        print(f"  A only / B only:     {cohort_result['a_only']:,} / {cohort_result['b_only']:,}")
+
+        icd_flags = cohort_result["icd_flags"]
+        if not icd_flags.is_empty():
+            flag_counts = (
+                icd_flags
+                .group_by("icd_flag")
+                .agg(pl.len().alias("n"))
+                .sort("icd_flag")
+            )
+            for row in flag_counts.iter_rows(named=True):
+                print(f"  {row['icd_flag']}: {row['n']:,}")
+
+        dx_mm = cohort_result["dx_type_mismatches"]
+        print(f"  DX_TYPE mismatches:  {dx_mm.height}")
+
+        if enr_path and enr_path.exists() and demo_path and demo_path.exists():
+            print(f"\n  Enrollment cross-check...")
+            enrollment_result = enrollment_crosscheck(
+                cohort_result["union_ids_df"], enr_path, demo_path
+            )
+            print(f"  With enrollment:     {enrollment_result['with_enrollment']:,} ({enrollment_result['coverage_pct']}%)")
+            print(f"  Without enrollment:  {enrollment_result['without_enrollment']:,}")
+        else:
+            print("  [SKIP] Enrollment cross-check — ENROLLMENT or DEMOGRAPHIC not found")
+
+        cohort_summary_df = build_cohort_summary_df(cohort_result, enrollment_result)
+        cohort_csv_path = reports_dir / "cohort_summary.csv"
+        cohort_summary_df.write_csv(cohort_csv_path)
+        print(f"\n  Cohort CSV: {cohort_csv_path}")
+    else:
+        print("  [SKIP] DIAGNOSIS or ENCOUNTER not found — cohort verification skipped")
+
     # ----- Assemble report -----
     print(f"\n{'─' * 60}")
     print("  Assembling report...")
@@ -525,7 +784,8 @@ def main(config_path: Path | None = None) -> None:
     report_parts.append("1. [Schema Validation](#1-schema-validation)")
     report_parts.append("2. [Key Integrity](#2-key-integrity)")
     report_parts.append("3. [Completeness by Partner](#3-completeness-by-partner)")
-    report_parts.append("4. [Missing Value Classification](#4-missing-value-classification)\n")
+    report_parts.append("4. [Missing Value Classification](#4-missing-value-classification)")
+    report_parts.append("5. [HL Cohort Verification](#5-hl-cohort-verification)\n")
     report_parts.append("---\n")
 
     report_parts.append(_section_schema(schema_results))
@@ -533,31 +793,39 @@ def main(config_path: Path | None = None) -> None:
     report_parts.append(_section_completeness(comp_df, table_map))
     report_parts.append(_section_missing(missing_df))
 
+    if cohort_result is not None:
+        report_parts.append(_section_cohort(cohort_result, enrollment_result))
+
     report_path = reports_dir / "structural_validation.md"
     report_path.write_text("\n".join(report_parts), encoding="utf-8")
 
     overall_elapsed = time.time() - overall_start
 
     # ----- Console summary -----
+    schema_warn_count = sum(1 for r in schema_results if r["status"] == "warn")
     total_orphan_patids = sum(r["orphan_ids"] for r in patid_results)
     total_orphan_encs = sum(
         r["orphan_encounterids"] for r in enc_results if not r.get("skipped")
     )
 
-    avg_completeness = comp_df["completeness"].mean() if not comp_df.is_empty() else 0.0
+    hl_union = cohort_result["union"] if cohort_result else 0
+    enr_cov = f"{enrollment_result['coverage_pct']}%" if enrollment_result else "N/A"
 
     print(f"\n{'=' * 60}")
     print("  STRUCTURAL VALIDATION COMPLETE")
     print(f"{'=' * 60}")
     print(f"  Tables validated:     {len(schema_results)}")
-    print(f"  Schema warnings:      {sum(1 for r in schema_results if r['status'] == 'warn')}")
-    print(f"  PATID unique:         {'Yes' if patid_unique['is_unique'] else 'No'}")
-    print(f"  Total orphan PATIDs:  {total_orphan_patids}")
-    print(f"  Total orphan ENCIDs:  {total_orphan_encs}")
-    print(f"  Avg completeness:     {avg_completeness:.1%}" if avg_completeness else "  Avg completeness:     N/A")
+    print(f"  Schema issues:        {schema_warn_count} tables with missing/extra columns")
+    print(f"  PATID orphans:        {total_orphan_patids} tables with orphan IDs")
+    print(f"  ENCOUNTERID orphans:  {total_orphan_encs} tables with orphan ENCOUNTERIDs")
+    print(f"  HL cohort (union):    {hl_union:,} patients (expected ~9,331)")
+    print(f"  Enrollment coverage:  {enr_cov}")
     print(f"  Elapsed:              {overall_elapsed:.1f}s")
-    print(f"  Report:               {report_path}")
-    print(f"  Completeness CSV:     {reports_dir / 'completeness_by_partner.csv'}")
+    print(f"  Reports:")
+    print(f"    - {report_path}")
+    print(f"    - {reports_dir / 'completeness_by_partner.csv'}")
+    if cohort_result:
+        print(f"    - {reports_dir / 'cohort_summary.csv'}")
     print(f"{'=' * 60}")
 
 
