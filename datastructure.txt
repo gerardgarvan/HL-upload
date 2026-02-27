@@ -1,0 +1,37 @@
+#This is where data is 
+'/orange/erin.mobley-hl.bcu/Mailhot_V1_20250915' 
+#data file names
+'CONDITION_Mailhot_V1.csv'
+'DEMOGRAPHIC_Mailhot_V1.csv'
+'ENCOUNTER_Mailhot_V1.csv'     
+'LAB_RESULT_Mailhot_V1.csv'           
+'MED_ADMIN_Mailhot_V1.csv' 
+'PRESCRIBING_Mailhot_V1.csv'  
+'PROVIDER_Mailhot_V1.csv'         
+'TUMOR_REGISTRY3_Mailhot_V1.csv'
+'DEATH_CAUSE_Mailhot_V1.csv'  
+'DIAGNOSIS_Mailhot_V1.csv'    
+'ENROLLMENT_Mailhot_V1.csv'    
+'LDS_ADDRESS_HISTORY_Mailhot_V1.csv'  
+'OBS_CLIN_Mailhot_V1.csv'   
+'PROCEDURES_Mailhot_V1.csv'   
+'TUMOR_REGISTRY1_Mailhot_V1.csv'  
+'VITAL_Mailhot_V1.csv'
+'DEATH_Mailhot_V1.csv'        
+'DISPENSING_Mailhot_V1.csv'   
+'IMMUNIZATION_Mailhot_V1.csv'  
+'OBS_GEN_Mailhot_V1.csv'    
+'PRO_CM_Mailhot_V1.csv'
+'TUMOR_REGISTRY2_Mailhot_V1.csv'
+
+#data codes
+'valuesets.csv'
+
+#information about pulled data
+'DatasetCoverPage_Mailhot_V1_20251024.txt'
+
+#meeting notes
+'QuantAnalysisNotes.docx'
+
+#apps available in hypergator
+https://docs.rc.ufl.edu/software/installed_applications/
