@@ -227,3 +227,359 @@ def validate_lab_plausibility(df: pl.DataFrame) -> pl.DataFrame:
 
     df = df.with_columns(range_flag.alias("RESULT_NUM_val_range"))
     return df
+
+
+# ---------------------------------------------------------------------------
+# 5. Mapped-partner auto-detection (ICD-9 → ICD-10)
+# ---------------------------------------------------------------------------
+
+
+def detect_mapped_partners(
+    df: pl.DataFrame,
+    partner_col: str = "SOURCE",
+) -> set[str]:
+    """Auto-detect partners that retrospectively mapped ICD-9 to ICD-10.
+
+    Partners with >95 % ICD-10 codes in pre-Oct-2015 data are flagged as
+    mappers.  AMS and UMI are always included (known mappers).
+    """
+    known: set[str] = {"AMS", "UMI"}
+    if partner_col not in df.columns or "DX_DATE" not in df.columns:
+        return known
+
+    pre = df.filter(
+        pl.col("DX_DATE").is_not_null() & (pl.col("DX_DATE") < ICD10_TRANSITION)
+    )
+    if pre.is_empty():
+        return known
+
+    is_icd10 = pl.col("DX").str.to_uppercase().str.contains(r"^[A-Z]")
+
+    partner_stats = (
+        pre
+        .with_columns(is_icd10.alias("_is_icd10"))
+        .group_by(partner_col)
+        .agg(
+            pl.len().alias("total"),
+            pl.col("_is_icd10").sum().alias("icd10_count"),
+        )
+        .with_columns(
+            (pl.col("icd10_count") / pl.col("total")).alias("icd10_pct")
+        )
+        .filter(pl.col("icd10_pct") > 0.95)
+    )
+
+    detected = set(partner_stats[partner_col].to_list())
+    return detected | known
+
+
+# ---------------------------------------------------------------------------
+# 6. ICD version-date concordance
+# ---------------------------------------------------------------------------
+
+
+def validate_icd_concordance(
+    df: pl.DataFrame,
+    mapped_partners: set[str],
+    partner_col: str = "SOURCE",
+) -> pl.DataFrame:
+    """Add ``DX_val_icd_concordance`` flag for ICD version-date mismatches.
+
+    Rules:
+    - Null DX_DATE → 0  (cannot assess)
+    - Grace period (Jul 2015 – Jan 2016) → 0
+    - ICD-9 after grace period → 1
+    - ICD-10 before grace period AND not a mapped partner → 1
+    - Otherwise → 0
+    """
+    if "DX" not in df.columns or "DX_DATE" not in df.columns:
+        return df
+
+    is_icd10 = pl.col("DX").str.to_uppercase().str.contains(r"^[A-Z]")
+
+    in_grace = pl.col("DX_DATE").ge(GRACE_START) & pl.col("DX_DATE").lt(GRACE_END)
+
+    is_mapped = (
+        pl.col(partner_col).is_in(mapped_partners)
+        if partner_col in df.columns and mapped_partners
+        else pl.lit(False)
+    )
+
+    flag = (
+        pl.when(pl.col("DX_DATE").is_null()).then(pl.lit(0))
+        .when(in_grace).then(pl.lit(0))
+        .when(~is_icd10 & pl.col("DX_DATE").ge(GRACE_END)).then(pl.lit(1))
+        .when(is_icd10 & pl.col("DX_DATE").lt(GRACE_START) & ~is_mapped).then(pl.lit(1))
+        .otherwise(pl.lit(0))
+    )
+
+    df = df.with_columns(flag.cast(pl.Int8).alias("DX_val_icd_concordance"))
+    return df
+
+
+# ---------------------------------------------------------------------------
+# 7. Encounter temporal validation (admit / discharge)
+# ---------------------------------------------------------------------------
+
+
+def validate_temporal_encounter(df: pl.DataFrame) -> pl.DataFrame:
+    """Add admit/discharge ordering and same-day flags.
+
+    ``_val_admit_discharge`` = 1 when DISCHARGE_DATE < ADMIT_DATE.
+    ``_val_same_day``        = 1 when both dates equal.
+    """
+    if "ADMIT_DATE" not in df.columns or "DISCHARGE_DATE" not in df.columns:
+        return df
+
+    df = df.with_columns(
+        pl.when(
+            pl.col("ADMIT_DATE").is_not_null()
+            & pl.col("DISCHARGE_DATE").is_not_null()
+            & (pl.col("DISCHARGE_DATE") < pl.col("ADMIT_DATE"))
+        )
+        .then(pl.lit(1))
+        .otherwise(pl.lit(0))
+        .cast(pl.Int8)
+        .alias("_val_admit_discharge")
+    )
+
+    df = df.with_columns(
+        pl.when(
+            pl.col("ADMIT_DATE").is_not_null()
+            & pl.col("DISCHARGE_DATE").is_not_null()
+            & (pl.col("ADMIT_DATE") == pl.col("DISCHARGE_DATE"))
+        )
+        .then(pl.lit(1))
+        .otherwise(pl.lit(0))
+        .cast(pl.Int8)
+        .alias("_val_same_day")
+    )
+    return df
+
+
+# ---------------------------------------------------------------------------
+# 8. Future-date validation (all tables)
+# ---------------------------------------------------------------------------
+
+
+def validate_future_dates(
+    df: pl.DataFrame,
+    cutoff: date | None = None,
+) -> pl.DataFrame:
+    """Add ``{COL}_val_future`` flag for dates beyond the cutoff.
+
+    Checks every Date / Datetime column in *df*.
+    """
+    cutoff = cutoff or FUTURE_DATE_CUTOFF
+    for col in df.columns:
+        dtype = df.schema[col]
+        if dtype == pl.Date:
+            df = df.with_columns(
+                pl.when(
+                    pl.col(col).is_not_null() & (pl.col(col) > cutoff)
+                )
+                .then(pl.lit(1))
+                .otherwise(pl.lit(0))
+                .cast(pl.Int8)
+                .alias(f"{col}_val_future")
+            )
+        elif dtype == pl.Datetime or (isinstance(dtype, pl.Datetime)):
+            df = df.with_columns(
+                pl.when(
+                    pl.col(col).is_not_null()
+                    & (pl.col(col).cast(pl.Date) > cutoff)
+                )
+                .then(pl.lit(1))
+                .otherwise(pl.lit(0))
+                .cast(pl.Int8)
+                .alias(f"{col}_val_future")
+            )
+    return df
+
+
+# ---------------------------------------------------------------------------
+# 9. Enrollment date ordering
+# ---------------------------------------------------------------------------
+
+
+def validate_enrollment_dates(df: pl.DataFrame) -> pl.DataFrame:
+    """Add ``_val_enr_dates`` flag when ENR_START_DATE > ENR_END_DATE."""
+    if "ENR_START_DATE" not in df.columns or "ENR_END_DATE" not in df.columns:
+        return df
+
+    df = df.with_columns(
+        pl.when(
+            pl.col("ENR_START_DATE").is_not_null()
+            & pl.col("ENR_END_DATE").is_not_null()
+            & (pl.col("ENR_START_DATE") > pl.col("ENR_END_DATE"))
+        )
+        .then(pl.lit(1))
+        .otherwise(pl.lit(0))
+        .cast(pl.Int8)
+        .alias("_val_enr_dates")
+    )
+    return df
+
+
+# ---------------------------------------------------------------------------
+# 10. Tumor registry HL-specific validation
+# ---------------------------------------------------------------------------
+
+
+def validate_tumor_registry(df: pl.DataFrame) -> pl.DataFrame:
+    """Add HL-specific tumor registry flags.
+
+    Checks histology codes, AJCC staging format, B-symptom coding,
+    age at diagnosis range, treatment-before-diagnosis timing, and
+    primary site lymph-node concordance.
+    """
+    # --- Histology ---
+    if "HISTOLOGY" in df.columns:
+        df = _ensure_float(df, "HISTOLOGY")
+        df = df.with_columns(
+            pl.col("HISTOLOGY").cast(pl.Int64, strict=False).alias("_hist_int")
+        )
+        df = df.with_columns(
+            pl.when(
+                pl.col("_hist_int").is_not_null()
+                & ~pl.col("_hist_int").is_in(HL_HISTOLOGY_CODES)
+            )
+            .then(pl.lit(1))
+            .otherwise(pl.lit(0))
+            .cast(pl.Int8)
+            .alias("HISTOLOGY_val_hl")
+        )
+        df = df.drop("_hist_int")
+
+    # --- AJCC staging ---
+    if "STAGE_GROUP" in df.columns:
+        df = df.with_columns(
+            pl.when(
+                pl.col("STAGE_GROUP").is_not_null()
+                & (pl.col("STAGE_GROUP") != "")
+                & ~pl.col("STAGE_GROUP").str.to_uppercase().is_in(VALID_AJCC_STAGES)
+            )
+            .then(pl.lit(1))
+            .otherwise(pl.lit(0))
+            .cast(pl.Int8)
+            .alias("STAGE_GROUP_val_format")
+        )
+
+    # --- B-symptoms (probe B_SYMPTOMS first, then CS_SSF1) ---
+    b_col = None
+    if "B_SYMPTOMS" in df.columns:
+        b_col = "B_SYMPTOMS"
+    elif "CS_SSF1" in df.columns:
+        b_col = "CS_SSF1"
+
+    if b_col is not None:
+        df = df.with_columns(
+            pl.when(
+                pl.col(b_col).is_not_null()
+                & (pl.col(b_col) != "")
+                & ~pl.col(b_col).str.to_uppercase().is_in(
+                    {v.upper() for v in _B_SYMPTOM_VALID}
+                )
+            )
+            .then(pl.lit(1))
+            .otherwise(pl.lit(0))
+            .cast(pl.Int8)
+            .alias(f"{b_col}_val_code")
+        )
+
+    # --- Age at diagnosis ---
+    if "AGE_AT_DIAGNOSIS" in df.columns:
+        df = _ensure_float(df, "AGE_AT_DIAGNOSIS")
+        df = df.with_columns(
+            pl.when(
+                pl.col("AGE_AT_DIAGNOSIS").is_not_null()
+                & (
+                    (pl.col("AGE_AT_DIAGNOSIS") < 0)
+                    | (
+                        (pl.col("AGE_AT_DIAGNOSIS") > 120)
+                        & (pl.col("AGE_AT_DIAGNOSIS") != 200)
+                    )
+                )
+            )
+            .then(pl.lit(1))
+            .otherwise(pl.lit(0))
+            .cast(pl.Int8)
+            .alias("AGE_AT_DIAGNOSIS_val_range")
+        )
+
+    # --- Treatment timing vs DATE_OF_DIAGNOSIS ---
+    if "DATE_OF_DIAGNOSIS" in df.columns:
+        tx_cols = [
+            "DT_SURG", "DT_RAD", "DT_CHEMO",
+            "CHEMO_START_DATE_SUMMARY",
+            "MOST_DEFINITIVE_SURGERY_DATE",
+            "IMMUNO_START_DATE",
+            "HORMONE_START_DATE",
+        ]
+        for tx_col in tx_cols:
+            if tx_col not in df.columns:
+                continue
+            df = df.with_columns(
+                pl.when(
+                    pl.col("DATE_OF_DIAGNOSIS").is_not_null()
+                    & pl.col(tx_col).is_not_null()
+                    & (pl.col(tx_col) < pl.col("DATE_OF_DIAGNOSIS"))
+                )
+                .then(pl.lit(1))
+                .otherwise(pl.lit(0))
+                .cast(pl.Int8)
+                .alias(f"{tx_col}_val_before_dx")
+            )
+
+    # --- Primary site (lymph node check) ---
+    if "PRIMARY_SITE" in df.columns:
+        df = df.with_columns(
+            pl.when(
+                pl.col("PRIMARY_SITE").is_not_null()
+                & ~pl.col("PRIMARY_SITE").str.to_uppercase().str.contains(r"^C77[0-9]$")
+            )
+            .then(pl.lit(1))
+            .otherwise(pl.lit(0))
+            .cast(pl.Int8)
+            .alias("PRIMARY_SITE_val_hl")
+        )
+
+    return df
+
+
+# ---------------------------------------------------------------------------
+# 11. Drop existing flag columns (idempotent re-runs)
+# ---------------------------------------------------------------------------
+
+
+def drop_existing_flags(df: pl.DataFrame) -> pl.DataFrame:
+    """Remove any existing ``_val_`` flag columns for idempotent re-runs."""
+    flag_cols = [c for c in df.columns if "_val_" in c]
+    if flag_cols:
+        df = df.drop(flag_cols)
+    return df
+
+
+# ---------------------------------------------------------------------------
+# 12. Write validated DataFrame back to Parquet
+# ---------------------------------------------------------------------------
+
+
+def write_validated(df: pl.DataFrame, parquet_path: Path) -> dict:
+    """Write *df* (with flag columns) back to Parquet and return flag stats.
+
+    Uses snappy compression for consistency with Phase 2.
+    """
+    flag_cols = [c for c in df.columns if "_val_" in c]
+    stats: dict = {
+        "path": str(parquet_path),
+        "total_rows": df.height,
+        "flag_columns_added": len(flag_cols),
+        "flags": {},
+    }
+    for fc in flag_cols:
+        flagged = df[fc].sum()
+        stats["flags"][fc] = int(flagged) if flagged is not None else 0
+
+    df.write_parquet(parquet_path, compression="snappy")
+    return stats
