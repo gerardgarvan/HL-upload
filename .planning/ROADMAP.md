@@ -342,6 +342,12 @@ Plans:
 - `reports/tumor_registry_validation.csv` — TR-specific findings
 - `src/validate/values.py` — validation script
 
+**Plans:** 2 plans
+
+Plans:
+- [ ] 04-01-PLAN.md — Core validation module (value set, plausibility, ICD concordance, temporal, tumor registry, insurance functions)
+- [ ] 04-02-PLAN.md — Entry point script, cross-table temporal analysis, and 4-file report generation
+
 ---
 
 ### Phase 5: Deduplication, Cross-Table Consistency & Partner Harmonization
