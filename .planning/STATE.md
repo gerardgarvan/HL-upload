@@ -1,11 +1,11 @@
 # Project State
 
 ## Current Position
-- **Current Phase:** 03
-- **Current Plan:** Not started
-- **Status:** Milestone complete
-- **Last session:** 2026-02-27T23:07:55.183Z
-- **Stopped at:** Phase 4 context gathered
+- **Current Phase:** 04
+- **Current Plan:** 1/2 complete
+- **Status:** In progress
+- **Last session:** 2026-02-27T23:45:00.000Z
+- **Stopped at:** Completed 04-01-PLAN.md (value & temporal validation functions)
 
 ## Progress
 
@@ -13,7 +13,8 @@
 Phase 1: ████░░░░░░░░░░░░░░░░ 1/2 plans (50%)
 Phase 2: ████████████████████ 1/1 plans (100%)
 Phase 3: ████████████████████ 2/2 plans (100%)
-Overall: ████████████░░░░░░░░ 4/? plans
+Phase 4: ██████████░░░░░░░░░░ 1/2 plans (50%)
+Overall: ██████████████░░░░░░ 5/? plans
 ```
 
 ## Decisions
@@ -35,6 +36,12 @@ Overall: ████████████░░░░░░░░ 4/? plans
 - DX format auto-detection samples 1000 records to choose dotted vs normalized code set
 - ICD version classification uses normalized _DX_MATCH column for consistent prefix matching
 - build_cohort_summary_df produces per-patient CSV with method membership, ICD flag, DX date range
+- Wide vital ranges (HT 50-272cm, WT 1-500kg) to minimize false positives
+- 20 LOINC codes covering CBC, liver function, TSH, ESR, CRP with wide biological ranges
+- ICD grace period Jul 2015 - Jan 2016; AMS/UMI always treated as mapped partners
+- Value set validation skips fields with >200 valid values (loosely-coded fields)
+- B-symptom probing: check B_SYMPTOMS first, fall back to CS_SSF1
+- Primary site check is informational (non-lymph-node sites possible in some HL)
 
 ## Blockers
 None.
@@ -47,3 +54,4 @@ None.
 | 02    | 01   | ~6min    | 2     | 2     |
 | 03    | 01   | ~8min    | 2     | 3     |
 | 03    | 02   | ~8min    | 2     | 2     |
+| 04    | 01   | ~8min    | 2     | 1     |
