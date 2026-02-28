@@ -4,8 +4,8 @@
 - **Current Phase:** 04 (complete)
 - **Current Plan:** 2/2 complete
 - **Status:** Phase complete
-- **Last session:** 2026-02-27T18:58:36Z
-- **Stopped at:** Completed 04-02-PLAN.md (entry point script and report generation)
+- **Last session:** 2026-02-28T00:00:00Z
+- **Stopped at:** Completed 04-02-PLAN.md (entry point script and report generation with pre-transition ICD-10 concordance)
 
 ## Progress
 
@@ -46,6 +46,7 @@ Overall: ████████████████████ 6/7 plans
 - HL timeline is cross-table summary (not per-row flags), combining PROCEDURES/PRESCRIBING/TUMOR_REGISTRY
 - Stem cell transplant CPTs (38240-38242) + radiation CPTs (77401-77427) for treatment detection
 - Small-cell suppression: dash in CSVs, warning marker in markdown reports
+- Pre-transition ICD-10 counts (before Oct 2015) added to concordance CSV for mapped partner detection
 
 ## Blockers
 None.
