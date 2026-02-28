@@ -40,6 +40,7 @@ from src.validate.values import (
     drop_existing_flags,
     write_validated,
     MASKED_BIRTH_DATE,
+    ICD10_TRANSITION,
     HL_LAB_RANGES,
     VITAL_RANGES,
 )
@@ -575,13 +576,15 @@ def _section_icd_concordance(concordance_data: dict) -> str:
 
     if "partner_breakdown" in concordance_data:
         lines.append("### Per-Partner Breakdown\n")
-        lines.append("| Partner | Total DX | ICD-9 | ICD-10 | Flagged | Mapped? |")
-        lines.append("|---------|----------|-------|--------|---------|---------|")
+        lines.append("| Partner | Total DX | ICD-9 | ICD-10 | Pre-Oct-2015 ICD-10 | Flagged | Mapped? |")
+        lines.append("|---------|----------|-------|--------|---------------------|---------|---------|")
         for row in concordance_data["partner_breakdown"]:
+            pre_icd10 = row.get("pre_transition_icd10", 0)
             lines.append(
                 f"| {row['partner']} | {row['total']:,} "
                 f"| {flag_small_cell(row['icd9'])} "
                 f"| {flag_small_cell(row['icd10'])} "
+                f"| {flag_small_cell(pre_icd10)} "
                 f"| {flag_small_cell(row['flagged'])} "
                 f"| {'Yes' if row['mapped'] else 'No'} |"
             )
@@ -946,13 +949,22 @@ def _build_concordance_data(
     is_icd10 = pl.col("DX").str.to_uppercase().str.contains(r"^[A-Z]")
 
     if partner_col in diag.columns:
+        is_pre_trans_icd10 = (
+            is_icd10
+            & pl.col("DX_DATE").is_not_null()
+            & (pl.col("DX_DATE") < ICD10_TRANSITION)
+        )
         partner_stats = (
-            diag.with_columns(is_icd10.alias("_is_icd10"))
+            diag.with_columns(
+                is_icd10.alias("_is_icd10"),
+                is_pre_trans_icd10.alias("_pre_icd10"),
+            )
             .group_by(partner_col)
             .agg(
                 pl.len().alias("total"),
                 pl.col("_is_icd10").sum().alias("icd10"),
                 (pl.len() - pl.col("_is_icd10").sum()).alias("icd9"),
+                pl.col("_pre_icd10").sum().alias("pre_transition_icd10"),
             )
             .sort(partner_col)
         )
@@ -995,6 +1007,7 @@ def _build_concordance_data(
                 "total": row["total"],
                 "icd9": row["icd9"],
                 "icd10": row["icd10"],
+                "pre_transition_icd10": row["pre_transition_icd10"],
                 "flagged": row["flagged"],
                 "mapped": p in mapped_partners,
             })
@@ -1013,11 +1026,13 @@ def _write_icd_concordance_csv(
 
     rows = []
     for row in concordance_data["partner_breakdown"]:
+        pre_icd10 = row.get("pre_transition_icd10", 0)
         rows.append({
             "partner": row["partner"],
             "total_dx": row["total"],
             "icd9_count": _suppress(row["icd9"]),
             "icd10_count": _suppress(row["icd10"]),
+            "pre_transition_icd10": _suppress(pre_icd10),
             "flagged_count": _suppress(row["flagged"]),
             "is_mapped": row["mapped"],
         })
