@@ -1,11 +1,11 @@
 # Project State
 
 ## Current Position
-- **Current Phase:** 04
-- **Current Plan:** 1/2 complete
-- **Status:** In progress
-- **Last session:** 2026-02-27T23:45:00.000Z
-- **Stopped at:** Completed 04-01-PLAN.md (value & temporal validation functions)
+- **Current Phase:** 04 (complete)
+- **Current Plan:** 2/2 complete
+- **Status:** Phase complete
+- **Last session:** 2026-02-27T18:58:36Z
+- **Stopped at:** Completed 04-02-PLAN.md (entry point script and report generation)
 
 ## Progress
 
@@ -13,8 +13,8 @@
 Phase 1: ████░░░░░░░░░░░░░░░░ 1/2 plans (50%)
 Phase 2: ████████████████████ 1/1 plans (100%)
 Phase 3: ████████████████████ 2/2 plans (100%)
-Phase 4: ██████████░░░░░░░░░░ 1/2 plans (50%)
-Overall: ██████████████░░░░░░ 5/? plans
+Phase 4: ████████████████████ 2/2 plans (100%)
+Overall: ████████████████████ 6/7 plans
 ```
 
 ## Decisions
@@ -42,6 +42,10 @@ Overall: ██████████████░░░░░░ 5/? plans
 - Value set validation skips fields with >200 valid values (loosely-coded fields)
 - B-symptom probing: check B_SYMPTOMS first, fall back to CS_SSF1
 - Primary site check is informational (non-lymph-node sites possible in some HL)
+- Masked birth date recovery uses TUMOR_REGISTRY AGE_AT_DIAGNOSIS + DATE_OF_DIAGNOSIS → Jan 1 of computed year
+- HL timeline is cross-table summary (not per-row flags), combining PROCEDURES/PRESCRIBING/TUMOR_REGISTRY
+- Stem cell transplant CPTs (38240-38242) + radiation CPTs (77401-77427) for treatment detection
+- Small-cell suppression: dash in CSVs, warning marker in markdown reports
 
 ## Blockers
 None.
@@ -55,3 +59,4 @@ None.
 | 03    | 01   | ~8min    | 2     | 3     |
 | 03    | 02   | ~8min    | 2     | 2     |
 | 04    | 01   | ~8min    | 2     | 1     |
+| 04    | 02   | ~5min    | 2     | 1     |
