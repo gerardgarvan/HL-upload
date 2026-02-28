@@ -398,6 +398,12 @@ Plans:
 - `src/clean/dedup.py` — extended dedup script
 - `src/clean/harmonize.py` — partner harmonization script
 
+**Plans:** 2 plans
+
+Plans:
+- [ ] 05-01-PLAN.md — Core modules: dedup flagging (6 tables), cross-table consistency, partner harmonization flags, insurance enrollment coverage
+- [ ] 05-02-PLAN.md — Entry point script and three markdown reports (dedup, consistency, partner harmonization)
+
 ---
 
 ### Phase 6: Data Quality Report & Clean Dataset Assembly
