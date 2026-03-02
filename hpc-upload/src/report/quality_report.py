@@ -14,6 +14,7 @@ from src.validate.structural import (
     PATID_COL,
     SMALL_CELL_THRESHOLD,
     TUMOR_REGISTRY_TABLES,
+    completeness_by_partner,
     flag_small_cell,
 )
 from src.validate.cohort import (
@@ -21,7 +22,14 @@ from src.validate.cohort import (
     ALL_HL_CODES,
     ALL_HL_NORMALIZED,
 )
-from src.validate.values import MASKED_BIRTH_DATE
+from src.validate.values import (
+    MASKED_BIRTH_DATE,
+    ICD10_TRANSITION,
+    VITAL_RANGES,
+    HL_LAB_RANGES,
+)
+from src.clean.dedup import DEDUP_KEYS
+from src.clean.harmonize import PARTNER_FLAGS
 
 # ---------------------------------------------------------------------------
 # Constants — HL subtype mapping (C81.x 4th character)
@@ -514,3 +522,172 @@ def build_patient_level_derived(table_map: dict[str, Path]) -> pl.DataFrame:
     ]
     present = [c for c in out_cols if c in base.columns]
     return base.select(present)
+
+
+# ---------------------------------------------------------------------------
+# DQ aggregation
+# ---------------------------------------------------------------------------
+
+
+def _suppress(value: int) -> str:
+    """Return '-' for counts 1-10 (CSV publishable); otherwise str(value)."""
+    if 1 <= value <= SMALL_CELL_THRESHOLD:
+        return "-"
+    return str(value)
+
+
+def aggregate_dq_metrics(
+    table_map: dict[str, Path],
+    reports_dir: Path,
+) -> dict:
+    """Aggregate DQ metrics for completeness, conformance, plausibility, persistence.
+
+    Returns dict with keys: completeness, conformance, plausibility, persistence.
+    Counts suitable for flag_small_cell when rendering to markdown.
+    """
+    result: dict = {
+        "completeness": {},
+        "conformance": {},
+        "plausibility": {},
+        "persistence": {},
+    }
+
+    # Completeness: read reports/completeness_by_partner.csv or compute from Parquet
+    comp_csv = reports_dir / "completeness_by_partner.csv"
+    if comp_csv.exists():
+        comp_df = pl.read_csv(comp_csv)
+        result["completeness"] = {"source": "csv", "df": comp_df}
+    else:
+        comp_tables: list[dict] = []
+        for table_name, path in table_map.items():
+            if path and path.exists():
+                df = completeness_by_partner(path, table_name)
+                if not df.is_empty():
+                    comp_tables.append({"table": table_name, "df": df})
+        result["completeness"] = {"source": "parquet", "tables": comp_tables}
+
+    # Conformance: aggregate _val_*code invalid counts from Parquet
+    conformance_rows: list[dict] = []
+    for table_name, path in table_map.items():
+        if not path or not path.exists():
+            continue
+        schema = pl.read_parquet_schema(path)
+        flag_cols = [c for c in schema if "_val_" in c and ("code" in c or "concordance" in c)]
+        if not flag_cols:
+            continue
+        for fc in flag_cols:
+            df = pl.scan_parquet(path).select(pl.col(fc).sum().alias("_s")).collect()
+            cnt = int(df["_s"][0] or 0)
+            conformance_rows.append({"table": table_name, "check": fc, "count": cnt})
+    result["conformance"] = {"invalid_counts": conformance_rows}
+
+    # Plausibility: aggregate _val_range, _val_future, temporal violations
+    plausibility_rows: list[dict] = []
+    for table_name, path in table_map.items():
+        if not path or not path.exists():
+            continue
+        schema = pl.read_parquet_schema(path)
+        flag_cols = [
+            c for c in schema
+            if "_val_" in c
+            and (
+                "range" in c
+                or "future" in c
+                or "before_birth" in c
+                or "after_death" in c
+                or "admit_discharge" in c
+                or "enr_dates" in c
+                or "before_dx" in c
+            )
+        ]
+        for fc in flag_cols:
+            df = pl.scan_parquet(path).select(pl.col(fc).sum().alias("_s")).collect()
+            cnt = int(df["_s"][0] or 0)
+            plausibility_rows.append({"table": table_name, "check": fc, "count": cnt})
+    result["plausibility"] = {"flagged_counts": plausibility_rows}
+
+    # Persistence: encounter counts by year/month by SOURCE
+    enc_path = table_map.get("ENCOUNTER")
+    persistence_data: dict = {"by_year": {}, "by_month": {}, "encounter_path": str(enc_path) if enc_path else None}
+    if enc_path and enc_path.exists():
+        enc_schema = pl.read_parquet_schema(enc_path)
+        if "ADMIT_DATE" in enc_schema:
+            enc = pl.scan_parquet(enc_path)
+            if "SOURCE" in enc_schema:
+                by_yr = (
+                    enc.with_columns(pl.col("ADMIT_DATE").dt.year().alias("year"))
+                    .filter(pl.col("ADMIT_DATE").is_not_null())
+                    .group_by("SOURCE", "year")
+                    .agg(pl.len().alias("n"))
+                    .collect()
+                )
+            else:
+                by_yr = (
+                    enc.with_columns(pl.col("ADMIT_DATE").dt.year().alias("year"))
+                    .filter(pl.col("ADMIT_DATE").is_not_null())
+                    .group_by("year")
+                    .agg(pl.len().alias("n"))
+                    .collect()
+                )
+            persistence_data["by_year"] = by_yr.to_dicts()
+    result["persistence"] = persistence_data
+
+    return result
+
+
+def generate_cleaning_decisions_content() -> list[str]:
+    """Generate markdown lines documenting cleaning decisions.
+
+    Returns list of strings; Plan 02 will write to CLEANING_DECISIONS.md.
+    """
+    lines: list[str] = []
+    lines.append("# Cleaning Decisions\n")
+    lines.append("## 1. Value Set Validation")
+    lines.append("- Coded fields validated against valuesets.csv")
+    lines.append("- NI (No Information), UN (Unknown), OT (Other): treated as valid missing codes")
+    lines.append("")
+
+    lines.append("## 2. Plausibility Ranges")
+    lines.append("### Vital Signs (VITAL_RANGES)")
+    for var, (lo, hi) in VITAL_RANGES.items():
+        lines.append(f"- {var}: {lo}–{hi}")
+    lines.append("### HL Lab Ranges (HL_LAB_RANGES)")
+    for loinc, info in list(HL_LAB_RANGES.items())[:5]:
+        lines.append(f"- {info['name']} ({loinc}): {info['min']}–{info['max']} {info['unit']}")
+    lines.append("- ... (20 LOINC codes total)")
+    lines.append("")
+
+    lines.append("## 3. Temporal Rules")
+    lines.append(f"- ICD-10 transition: {ICD10_TRANSITION}; grace period Jul 2015–Jan 2016")
+    lines.append("- DX_TO_TX_DAYS: 0–365 days considered plausible; outside flagged")
+    lines.append("")
+
+    lines.append("## 4. Deduplication Keys (DEDUP_KEYS)")
+    for table, keys in DEDUP_KEYS.items():
+        lines.append(f"- {table}: {', '.join(keys)}")
+    lines.append("")
+
+    lines.append("## 5. Partner Flags")
+    for flag, partners in PARTNER_FLAGS.items():
+        lines.append(f"- **{flag}**: {', '.join(sorted(partners))}")
+    lines.append("")
+
+    lines.append("## 6. Masked Values")
+    lines.append("- BIRTH_DATE = 1900-01-01 → AGE_BAND folded into 65+")
+    lines.append("- AGE_AT_DIAGNOSIS = 200 (implausible placeholder) → 65+ band")
+    lines.append("")
+
+    lines.append("## 7. TUMOR_REGISTRY Date Formats")
+    lines.append("- Supported: MM/DD/YYYY, YYYY.MM.DD, %d%b%Y (DATE9), %Y%m%d (YYYYMMDD)")
+    lines.append("")
+
+    lines.append("## 8. INSURANCE_CONTINUITY")
+    lines.append("- Flag = 1 when gap > 30 days in enrollment covering treatment window")
+    lines.append("- Treatment window: FIRST_HL_DX_DATE to min(FIRST_HL_TX_DATE + 365, last encounter)")
+    lines.append("")
+
+    lines.append("## 9. Small Cell Suppression")
+    lines.append(f"- SMALL_CELL_THRESHOLD = {SMALL_CELL_THRESHOLD}")
+    lines.append("- Counts 1–10 suppressed in reports (dash in CSV, warning marker in markdown)")
+
+    return lines
