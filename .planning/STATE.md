@@ -2,10 +2,10 @@
 
 ## Current Position
 - **Current Phase:** 05
-- **Current Plan:** 1/2 complete
-- **Status:** In progress
-- **Last session:** 2026-03-02T10:02:00Z
-- **Stopped at:** Completed 05-01-PLAN.md (core dedup, cross-table consistency, partner harmonization modules)
+- **Current Plan:** 2/2 complete
+- **Status:** Phase 05 complete
+- **Last session:** 2026-03-02T10:11:00Z
+- **Stopped at:** Completed 05-02-PLAN.md (entry point script and three markdown reports)
 
 ## Progress
 
@@ -14,8 +14,8 @@ Phase 1: ████░░░░░░░░░░░░░░░░ 1/2 plans 
 Phase 2: ████████████████████ 1/1 plans (100%)
 Phase 3: ████████████████████ 2/2 plans (100%)
 Phase 4: ████████████████████ 2/2 plans (100%)
-Phase 5: ██████████░░░░░░░░░░ 1/2 plans (50%)
-Overall: ████████████████████ 7/9 plans
+Phase 5: ████████████████████ 2/2 plans (100%)
+Overall: ████████████████████ 9/9 plans
 ```
 
 ## Decisions
@@ -54,6 +54,10 @@ Overall: ████████████████████ 7/9 plans
 - Partner flags applied to ALL tables with SOURCE column (not just DIAGNOSIS)
 - Enrollment coverage uses lazy eval + group_by collapse for many-to-many join safety
 - TR date parsing fallback chain: MM/DD/YYYY, DATE9, YYYYMMDD (matching Phase 4 patterns)
+- Report generation functions defined in entry-point script (not separate module) for simplicity
+- flag_small_cell() for markdown reports, _suppress() for CSVs — consistent HIPAA suppression
+- Reference tables (ENCOUNTER, ENROLLMENT) loaded once before main loop for efficiency
+- partner_dedup stored as DataFrame in stats dict for lazy per-partner iteration in reports
 
 ## Blockers
 None.
@@ -69,3 +73,4 @@ None.
 | 04    | 01   | ~8min    | 2     | 1     |
 | 04    | 02   | ~5min    | 2     | 1     |
 | 05    | 01   | ~6min    | 2     | 3     |
+| 05    | 02   | ~6min    | 2     | 1     |
