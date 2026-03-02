@@ -21,7 +21,12 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.load.config import load_config
 from src.load.schema import parse_datastructure
-from src.report.quality_report import build_patient_level_derived
+from src.report.quality_report import (
+    build_patient_level_derived,
+    aggregate_dq_metrics,
+    generate_cleaning_decisions_content,
+)
+from src.validate.structural import flag_small_cell
 
 
 # ---------------------------------------------------------------------------
@@ -60,9 +65,11 @@ def main(config_path: Path | None = None) -> None:
 
     parquet_clean_dir = paths.parquet_dir.parent / "parquet_clean"
     derived_dir = paths.parquet_dir.parent / "derived"
+    reports_dir = PROJECT_ROOT / "reports"
 
     parquet_clean_dir.mkdir(parents=True, exist_ok=True)
     derived_dir.mkdir(parents=True, exist_ok=True)
+    reports_dir.mkdir(parents=True, exist_ok=True)
 
     # Copy Parquet to parquet_clean (snappy compression)
     print(f"\n--- Copy Parquet to {parquet_clean_dir} ---")
@@ -86,6 +93,99 @@ def main(config_path: Path | None = None) -> None:
     print(f"  Rows: {patient_df.height:,}")
     print(f"  Written: {patient_path}")
 
+    # Generate reports
+    print(f"\n--- Generate reports ---")
+    dq = aggregate_dq_metrics(table_map, reports_dir)
+
+    # DATA_QUALITY_REPORT.md
+    dq_lines: list[str] = []
+    dq_lines.append("# Data Quality Report\n")
+    dq_lines.append(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    dq_lines.append(f"**Parquet directory:** {paths.parquet_dir}")
+    dq_lines.append(f"**Tables:** {len([p for p in table_map.values() if p.exists()])}\n")
+
+    dq_lines.append("## 1. Overview\n")
+    dq_lines.append(f"- Tables processed: {len(table_map)}")
+    dq_lines.append(f"- Patient-level derived: {patient_path}")
+    dq_lines.append("")
+
+    # 2. Completeness (stratified by SOURCE/partner)
+    dq_lines.append("## 2. Completeness (per-field non-null by partner)\n")
+    comp = dq.get("completeness", {})
+    if comp.get("source") == "csv" and "df" in comp:
+        cdf = comp["df"]
+        for row in cdf.iter_rows(named=True):
+            partner = row.get("SOURCE", row.get("SITE", "ALL"))
+            tbl = row.get("table", "")
+            col = row.get("column", "")
+            comp_val = row.get("completeness")
+            rc = int(row.get("row_count", 0))
+            pct = f"{comp_val * 100:.1f}%" if comp_val is not None else "N/A"
+            dq_lines.append(f"- **{tbl}.{col}** | {partner} | {flag_small_cell(rc)} rows | {pct}")
+    elif comp.get("source") == "parquet" and "tables" in comp:
+        for item in comp["tables"]:
+            tbl = item["table"]
+            cdf = item["df"]
+            for row in cdf.iter_rows(named=True):
+                partner = row.get("SOURCE", row.get("SITE", "ALL"))
+                col = row.get("column", "")
+                comp_val = row.get("completeness")
+                rc = int(row.get("row_count", 0))
+                pct = f"{comp_val * 100:.1f}%" if comp_val is not None else "N/A"
+                dq_lines.append(f"- **{tbl}.{col}** | {partner} | {flag_small_cell(rc)} rows | {pct}")
+    else:
+        dq_lines.append("No completeness data available.")
+    dq_lines.append("")
+
+    # 3. Conformance (invalid code summaries)
+    dq_lines.append("## 3. Conformance (invalid code counts)\n")
+    conf = dq.get("conformance", {}).get("invalid_counts", [])
+    for r in conf:
+        dq_lines.append(f"- **{r['table']}.{r['check']}**: {flag_small_cell(r['count'])}")
+    if not conf:
+        dq_lines.append("No conformance flags.")
+    dq_lines.append("")
+
+    # 4. Plausibility (out-of-range, temporal)
+    dq_lines.append("## 4. Plausibility (range, temporal violations)\n")
+    plaus = dq.get("plausibility", {}).get("flagged_counts", [])
+    for r in plaus:
+        dq_lines.append(f"- **{r['table']}.{r['check']}**: {flag_small_cell(r['count'])}")
+    if not plaus:
+        dq_lines.append("No plausibility flags.")
+    dq_lines.append("")
+
+    # 5. Persistence (volume over time by partner)
+    dq_lines.append("## 5. Persistence (volume over time by partner)\n")
+    pers = dq.get("persistence", {})
+    by_year = pers.get("by_year", [])
+    if by_year:
+        for row in by_year:
+            src = row.get("SOURCE", "ALL")
+            yr = row.get("year", "")
+            n = row.get("n", 0)
+            dq_lines.append(f"- {src} | {yr} | {flag_small_cell(n)} encounters")
+    else:
+        dq_lines.append("No persistence data (ENCOUNTER.ADMIT_DATE).")
+    dq_lines.append("")
+
+    dq_path = reports_dir / "DATA_QUALITY_REPORT.md"
+    dq_path.write_text("\n".join(dq_lines), encoding="utf-8")
+    print(f"  Written: {dq_path}")
+
+    # CLEANING_DECISIONS.md
+    cd_lines = generate_cleaning_decisions_content()
+    cd_lines.insert(1, f"\n**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    cd_lines.insert(2, "Reference: Phase 3–5 reports (structural, values, cohort, dedup, harmonization).\n")
+    cd_path = reports_dir / "CLEANING_DECISIONS.md"
+    cd_path.write_text("\n".join(cd_lines), encoding="utf-8")
+    print(f"  Written: {cd_path}")
+
+    # figures/ directory
+    figures_dir = reports_dir / "figures"
+    figures_dir.mkdir(parents=True, exist_ok=True)
+    print(f"  figures/: {figures_dir}")
+
     print(f"\n{'=' * 60}")
     print("  ASSEMBLE CLEAN COMPLETE")
     print(f"{'=' * 60}")
@@ -93,6 +193,7 @@ def main(config_path: Path | None = None) -> None:
     print(f"  patient_level:     {patient_df.height:,} rows")
     print(f"  parquet_clean:     {parquet_clean_dir}")
     print(f"  derived:           {patient_path}")
+    print(f"  Reports:           {dq_path}, {cd_path}")
     print(f"{'=' * 60}")
 
 
