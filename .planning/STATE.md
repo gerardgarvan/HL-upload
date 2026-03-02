@@ -1,11 +1,11 @@
 # Project State
 
 ## Current Position
-- **Current Phase:** 04
-- **Current Plan:** Not started
-- **Status:** Milestone complete
-- **Last session:** 2026-02-28T00:00:00Z
-- **Stopped at:** Completed 04-02-PLAN.md (entry point script and report generation with pre-transition ICD-10 concordance)
+- **Current Phase:** 05
+- **Current Plan:** 1/2 complete
+- **Status:** In progress
+- **Last session:** 2026-03-02T10:02:00Z
+- **Stopped at:** Completed 05-01-PLAN.md (core dedup, cross-table consistency, partner harmonization modules)
 
 ## Progress
 
@@ -14,7 +14,8 @@ Phase 1: ████░░░░░░░░░░░░░░░░ 1/2 plans 
 Phase 2: ████████████████████ 1/1 plans (100%)
 Phase 3: ████████████████████ 2/2 plans (100%)
 Phase 4: ████████████████████ 2/2 plans (100%)
-Overall: ████████████████████ 6/7 plans
+Phase 5: ██████████░░░░░░░░░░ 1/2 plans (50%)
+Overall: ████████████████████ 7/9 plans
 ```
 
 ## Decisions
@@ -47,6 +48,12 @@ Overall: ████████████████████ 6/7 plans
 - Stem cell transplant CPTs (38240-38242) + radiation CPTs (77401-77427) for treatment detection
 - Small-cell suppression: dash in CSVs, warning marker in markdown reports
 - Pre-transition ICD-10 counts (before Oct 2015) added to concordance CSV for mapped partner detection
+- flag_duplicates uses df.select(subset).is_duplicated() — simpler than pl.struct, same semantics
+- IS_DUPLICATE marks ALL occurrences (first + subsequent) for unambiguous flag interpretation
+- Phase 5 flags: IS_DUPLICATE, ICD_MAPPED, CLAIMS_ONLY, DEATH_ONLY + _con_ prefix for consistency
+- Partner flags applied to ALL tables with SOURCE column (not just DIAGNOSIS)
+- Enrollment coverage uses lazy eval + group_by collapse for many-to-many join safety
+- TR date parsing fallback chain: MM/DD/YYYY, DATE9, YYYYMMDD (matching Phase 4 patterns)
 
 ## Blockers
 None.
@@ -61,3 +68,4 @@ None.
 | 03    | 02   | ~8min    | 2     | 2     |
 | 04    | 01   | ~8min    | 2     | 1     |
 | 04    | 02   | ~5min    | 2     | 1     |
+| 05    | 01   | ~6min    | 2     | 3     |
