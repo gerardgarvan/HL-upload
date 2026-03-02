@@ -458,6 +458,12 @@ Plans:
 - `data/derived/patient_level.parquet` — patient-level derived variables (age, subtype, insurance, region)
 - `src/report/quality_report.py` — report generation script
 
+**Plans:** 2 plans
+
+Plans:
+- [ ] 06-01-PLAN.md — Derived vars module (build_patient_level_derived) + DQ aggregation (aggregate_dq_metrics, generate_cleaning_decisions_content)
+- [ ] 06-02-PLAN.md — Entry point (assemble_clean.py), parquet_clean copy, patient_level.parquet, DATA_QUALITY_REPORT.md, CLEANING_DECISIONS.md
+
 ---
 
 ## Risk Register
