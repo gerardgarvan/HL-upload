@@ -2,10 +2,10 @@
 
 ## Current Position
 - **Current Phase:** 06
-- **Current Plan:** 01
-- **Status:** Plan 01 complete
-- **Last session:** 2026-03-02T20:05:00Z
-- **Stopped at:** Completed 06-01-PLAN.md (derived vars, DQ aggregation)
+- **Current Plan:** 02
+- **Status:** Plan 02 complete
+- **Last session:** 2026-03-02T20:02:00.795Z
+- **Stopped at:** Completed 06-02-PLAN.md
 
 ## Progress
 
@@ -15,8 +15,8 @@ Phase 2: ████████████████████ 1/1 plans 
 Phase 3: ████████████████████ 2/2 plans (100%)
 Phase 4: ████████████████████ 2/2 plans (100%)
 Phase 5: ████████████████████ 2/2 plans (100%)
-Phase 6: ██████████░░░░░░░░░░ 1/2 plans (50%)
-Overall: ██████████████████░░ 10/11 plans
+Phase 6: ████████████████████ 2/2 plans (100%)
+Overall: ████████████████████ 11/11 plans
 ```
 
 ## Decisions
@@ -59,6 +59,8 @@ Overall: ██████████████████░░ 10/11 plan
 - flag_small_cell() for markdown reports, _suppress() for CSVs — consistent HIPAA suppression
 - Reference tables (ENCOUNTER, ENROLLMENT) loaded once before main loop for efficiency
 - partner_dedup stored as DataFrame in stats dict for lazy per-partner iteration in reports
+- [Phase 06-data-quality-report-clean-dataset-assembly]: Snappy compression throughout per HPC learnings
+- [Phase 06-data-quality-report-clean-dataset-assembly]: parquet_clean_dir and derived_dir derived from parquet_dir.parent
 
 ## Blockers
 None.
@@ -76,3 +78,5 @@ None.
 | 05    | 01   | ~6min    | 2     | 3     |
 | 05    | 02   | ~6min    | 2     | 1     |
 | 06    | 01   | ~12min   | 2     | 2     |
+| 06    | 02   | ~8min    | 2     | 4     |
+
