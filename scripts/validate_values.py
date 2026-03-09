@@ -1,5 +1,7 @@
 """Value and temporal validation for OneFlorida+ PCORnet CDM.
 
+Small-cell: all report counts use flag_small_cell/_suppress per REQ-05.
+
 Validates coded fields against CDM value sets, checks vital/lab plausibility,
 verifies ICD version-date concordance, validates temporal consistency, applies
 HL-specific tumor registry checks, and adds binary flag columns to Parquet files.
@@ -19,7 +21,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.load.config import load_config
-from src.load.schema import parse_datastructure
+from src.load.schema import parse_datastructure, resolve_table_name
 from src.validate.structural import (
     PATID_COL,
     SMALL_CELL_THRESHOLD,
@@ -65,7 +67,7 @@ def _build_table_map(
     table_map: dict[str, Path] = {}
     for filename in table_filenames:
         stem = Path(filename).stem
-        table_name = stem.split("_Mailhot_V1")[0]
+        table_name = resolve_table_name(stem)
         parquet_path = parquet_dir / (stem + ".parquet")
         table_map[table_name] = parquet_path
     return table_map
@@ -125,6 +127,15 @@ def _load_birth_death_lookup(
             )
             if tr.is_empty():
                 continue
+            dx_col = pl.col("DATE_OF_DIAGNOSIS")
+            dx_dtype = tr["DATE_OF_DIAGNOSIS"].dtype
+            if dx_dtype == pl.String or dx_dtype == pl.Utf8:
+                tr = tr.with_columns(
+                    dx_col.str.to_date("%m/%d/%Y", strict=False)
+                    .fill_null(dx_col.str.to_date("%d%b%Y", strict=False))
+                    .fill_null(dx_col.str.to_date("%Y%m%d", strict=False))
+                    .alias("DATE_OF_DIAGNOSIS")
+                )
             approx = (
                 tr.group_by(PATID_COL)
                 .agg(
@@ -133,7 +144,7 @@ def _load_birth_death_lookup(
                 )
                 .with_columns(
                     (
-                        pl.col("_dx_date").cast(pl.Date).dt.year()
+                        pl.col("_dx_date").dt.year()
                         - pl.col("_age").cast(pl.Int32)
                     ).alias("_birth_year")
                 )
@@ -335,7 +346,7 @@ def _compute_hl_timeline(
             rx = (
                 pl.scan_parquet(rx_path)
                 .with_columns(pl.col(PATID_COL).cast(pl.String))
-                .filter(pl.col(PATID_COL).is_in(first_dx[PATID_COL]))
+                .filter(pl.col(PATID_COL).is_in(first_dx[PATID_COL].implode()))
                 .filter(pl.col(rx_date_col).is_not_null())
                 .group_by(PATID_COL)
                 .agg(pl.col(rx_date_col).min().alias("FIRST_TX_DATE"))
@@ -357,17 +368,24 @@ def _compute_hl_timeline(
         tr = (
             pl.scan_parquet(tr_path)
             .with_columns(pl.col(PATID_COL).cast(pl.String))
-            .filter(pl.col(PATID_COL).is_in(first_dx[PATID_COL]))
+            .filter(pl.col(PATID_COL).is_in(first_dx[PATID_COL].implode()))
             .select([PATID_COL] + available_tx)
             .collect()
         )
         if tr.is_empty():
             continue
         for tc in available_tx:
+            if tr[tc].dtype == pl.String or tr[tc].dtype == pl.Utf8:
+                tr = tr.with_columns(
+                    pl.col(tc).str.to_date("%Y.%m.%d", strict=False)
+                    .fill_null(pl.col(tc).str.to_date("%m/%d/%Y", strict=False))
+                    .fill_null(pl.col(tc).str.to_date("%d%b%Y", strict=False))
+                    .fill_null(pl.col(tc).str.to_date("%Y%m%d", strict=False))
+                )
             tc_df = (
                 tr.filter(pl.col(tc).is_not_null())
                 .group_by(PATID_COL)
-                .agg(pl.col(tc).min().cast(pl.Date).alias("FIRST_TX_DATE"))
+                .agg(pl.col(tc).min().alias("FIRST_TX_DATE"))
             )
             if not tc_df.is_empty():
                 tx_frames.append(tc_df)

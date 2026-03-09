@@ -1,7 +1,9 @@
 # Project Research Summary
 
-**Project:** Healthcare Data Loading and Cleaning Pipeline
-**Domain:** Healthcare / Biomedical Research Data Processing (PCORnet CDM / OneFlorida+)
+**Project:** HL Data Loading and Cleaning Pipeline
+**Study:** UFPTI 2405-HLX17A — "Insurance Inequities in Hodgkin Lymphoma Treatment and Survivorship in the Southeast"
+**PI:** Raymond Mailhot | **IRB:** IRB202400721
+**Domain:** Hodgkin Lymphoma / OneFlorida+ PCORnet CDM v6.1
 **Researched:** 2026-02-27
 **Confidence:** HIGH
 
@@ -9,11 +11,13 @@
 
 ## Executive Summary
 
-This project involves loading, converting, and cleaning large healthcare CSV flat files exported from SAS — likely OneFlorida+ data in PCORnet CDM v7.0 format — on UF's HiPerGator HPC cluster. The data covers ~26 million patients with billions of clinical records (diagnoses, procedures, medications, labs, vitals). Files use SAS date encoding (integer days since 1960-01-01), which must be converted before any analysis. The environment is SLURM-scheduled Linux nodes with conda-based package management.
+This project builds the data loading and cleaning layer for the Hodgkin Lymphoma insurance inequities study (UFPTI 2405-HLX17A). It ingests 22 PCORnet CDM v6.1 CSV flat files from the OneFlorida+ Mailhot_V1 cohort (9,331 HL patients, ICD-10 C81\*/ICD-9 201\*, 2+ encounters on different dates, Jan 2012–Mar 2025) on UF's HiPerGator HPC cluster. Files use SAS DATE9. formatted strings (e.g., "01JAN2020"), not raw integer dates.
 
-The recommended approach is a **Python-first pipeline using Polars for loading, with a one-time CSV-to-Parquet conversion** as the single highest-impact optimization. Polars provides top-tier loading speed (~0.4s for 500MB), lazy evaluation for selective reading, and multi-threaded processing that naturally exploits HiPerGator's multi-core nodes. DuckDB should be used alongside Polars for SQL-based exploratory queries and for processing files that exceed available RAM. After the initial load, all subsequent reads should use Parquet files (5-10x smaller, 10-100x faster). Pandas remains essential for downstream statistical modeling and visualization, but should not be the loading tool.
+An existing `HL-EDA` project has already completed a full EDA pipeline (load→clean→characterize→visualize) using pandas+pyarrow. This project extends and refactors the loading/cleaning layers to: (1) convert CSVs to Parquet for 10-100x faster reads, (2) add Polars and DuckDB for speed, (3) deepen validation beyond EDA-level cleaning, and (4) produce standalone analysis-ready Parquet datasets.
 
-The primary risks are: (1) **SAS date/datetime confusion** — applying a days-since-epoch conversion to a seconds-since-epoch column produces catastrophically wrong dates, and this error is silent; (2) **HIPAA compliance** — OneFlorida+ data is a Limited Data Set containing PHI (full dates, ZIP codes), requiring secure storage on `/blue` or `/orange` with no local copies; (3) **data quality pitfalls inherent to PCORnet CDM** — missing values encoded as `NI`/`UN`/`OT` carry different semantics that are lost if treated uniformly, and cross-site variability means cleaning rules must account for inconsistent coding practices across health systems.
+The recommended approach adds **Polars and DuckDB** to the existing pandas+pyarrow stack. Polars handles fast CSV-to-Parquet conversion; DuckDB provides SQL capability (answering the question about SQL on HiPerGator); pandas remains for compatibility with existing HL-EDA code. The one-time CSV-to-Parquet conversion is the single highest-impact optimization.
+
+The primary risks are: (1) **Partner data heterogeneity** — 15 partners with wildly different table availability (FLM is claims-only, VRT is death-only, 3 partners lack payer data critical for the insurance inequities study); (2) **HIPAA compliance** — OneFlorida+ LDS data contains PHI, requiring storage on `/blue` or `/orange` with small cell suppression (1–10); (3) **Tumor registry limitations** — only 3 of 15 partners (ORL, TMH, UFH) provide TUMOR_REGISTRY data, and it's stale, limiting staging-stratified analysis.
 
 ---
 
@@ -23,25 +27,28 @@ The primary risks are: (1) **SAS date/datetime confusion** — applying a days-s
 
 **See:** [TECH_RESEARCH.md](./TECH_RESEARCH.md) for full benchmarks and comparison tables.
 
-Python is the primary language, with R available for specialized statistical work via HiPerGator's module system. All tools are installable via conda on HiPerGator with no special permissions.
+**Existing stack (from HL-EDA):** python=3.11, pandas>=2.2, pyarrow>=18.0, matplotlib, seaborn, jinja2, tabulate, tomli. Conda env `hl-eda` on `/blue/erin.mobley-hl.bcu`.
 
-**Core technologies:**
+**Add to existing stack:**
 
 | Technology | Purpose | Why |
 |-----------|---------|-----|
-| **Polars** | Primary CSV/Parquet loading & transformation | Fastest Python DataFrame library (~0.4s/500MB); lazy evaluation via `scan_csv()`/`scan_parquet()` enables selective column/row reads; auto-parallelizes across cores |
-| **DuckDB** | SQL queries on files, out-of-core processing | Queries files larger than RAM via streaming execution; SQL interface natural for data exploration; handles messy CSVs robustly; no server needed |
-| **Pandas + PyArrow** | Downstream analysis & modeling interface | Required by scikit-learn, statsmodels, lifelines; use `engine='pyarrow', dtype_backend='pyarrow'` for fast loading when pandas DataFrame is the target |
-| **PyArrow / Parquet** | Storage format after initial conversion | 5-10x compression; columnar reads; type-preserving; universal interchange format |
-| **Conda / Mamba** | Environment management on HiPerGator | Isolated environments on `/blue` storage; mamba is faster; avoids global pip conflicts |
+| **Polars** | CSV-to-Parquet conversion, fast loading | Fastest Python DataFrame library (~0.4s/500MB); lazy evaluation; auto-parallelizes |
+| **DuckDB** | SQL queries on Parquet, cross-table joins | No-server SQL on HiPerGator; out-of-core capable; answers "does HiPerGator have SQL?" |
 
-**When to use R instead:** If the team's statistical workflow requires R-native packages (survival analysis with `survival`, mixed models with `lme4`, visualization with `ggplot2`), use `data.table::fread()` for loading and `arrow` for Parquet I/O. `fread()` is competitive with Polars and superior for string-heavy data.
+**Keep from HL-EDA (already installed):**
+
+| Technology | Purpose | Why |
+|-----------|---------|-----|
+| **Pandas + PyArrow** | Downstream analysis, compatibility with HL-EDA code | Existing clean/characterize/visualize code uses pandas throughout |
+| **PyArrow / Parquet** | Storage format after initial conversion | 5-10x compression; columnar reads; type-preserving |
+| **Conda / Mamba** | Environment management on HiPerGator | Existing `hl-eda` env on `/blue` |
 
 ### Healthcare Data Context
 
 **See:** [HEALTHCARE_DATA_RESEARCH.md](./HEALTHCARE_DATA_RESEARCH.md) for full PCORnet CDM table schemas and cleaning pipeline.
 
-OneFlorida+ uses PCORnet CDM v7.0 with 24+ tables covering demographics, encounters, diagnoses, procedures, medications, labs, vitals, and death records. The data integrates EHR sources (UF Health, AdventHealth, others) with Florida Medicaid claims. Key characteristics:
+**Correction from initial research:** The cohort uses PCORnet CDM **v6.1** (not v7.0). The Mailhot_V1 extract contains **22 tables** for **9,331 HL patients** from **15 partners**. Data integrates EHR sources (UF Health, AdventHealth, NCH, etc.) with Florida Medicaid claims (FLM). The existing HL-EDA project has already implemented value set mapping, deduplication, and age masking for all 22 tables. Key characteristics:
 
 **Must-have cleaning steps (table stakes):**
 - SAS date conversion for all date columns (days since 1960-01-01)
@@ -64,16 +71,20 @@ OneFlorida+ uses PCORnet CDM v7.0 with 24+ tables covering demographics, encount
 - Study-specific cohort definitions and analytic variable derivation
 - Longitudinal consistency analysis across quarterly refreshes
 
-### SAS Date Conversion
+### SAS Date Handling
 
 **See:** [SAS_DATES_RESEARCH.md](./SAS_DATES_RESEARCH.md) for full conversion formulas, pitfall catalog, and validation functions.
 
-SAS dates are integers (days since 1960-01-01); SAS datetimes are real numbers (seconds since 1960-01-01). Modern healthcare dates fall in the range ~10,000–25,000 (days) or hundreds of millions to low billions (datetimes). The conversion is straightforward but has critical pitfalls:
+**Correction from initial research:** The Mailhot_V1 CSV files use **SAS DATE9. formatted strings** (e.g., "01JAN2020", "15MAR2023"), **not** raw integer SAS dates. This was confirmed by examining the existing HL-EDA codebase, which parses dates using `pd.to_datetime(series, format="%d%b%Y")` in `masking.py`. Datetime columns use `%d%b%Y:%H:%M:%S` format.
 
-| Conversion | Python (pandas) | R |
-|-----------|----------------|---|
-| SAS Date → Date | `pd.to_datetime(col, unit='D', origin='1960-01-01')` | `as.Date(col, origin="1960-01-01")` |
-| SAS Datetime → Datetime | `pd.to_datetime(col, unit='s', origin='1960-01-01')` | `as.POSIXct(col, origin="1960-01-01", tz="UTC")` |
+The integer-to-date conversion formulas from the initial research are **not needed** for this cohort. The actual conversion is string parsing:
+
+| Conversion | Python (pandas) | Polars |
+|-----------|----------------|-------|
+| SAS DATE9. → Date | `pd.to_datetime(col, format="%d%b%Y", errors="coerce")` | `pl.col("date").str.to_date("%d%b%Y")` |
+| SAS DATETIME. → Datetime | `pd.to_datetime(col, format="%d%b%Y:%H:%M:%S", errors="coerce")` | `pl.col("dt").str.to_datetime("%d%b%Y:%H:%M:%S")` |
+
+**Note:** TUMOR_REGISTRY tables may use different date formats (NAACCR standard is YYYYMMDD). Test separately.
 
 ### HiPerGator Environment
 
@@ -91,139 +102,39 @@ SAS dates are integers (days since 1960-01-01); SAS datetimes are real numbers (
 | **Interactive** | Open OnDemand (ood.rc.ufl.edu) for Jupyter/RStudio; allocates compute node automatically |
 | **Multi-file** | SLURM array jobs for processing independent files in parallel |
 
-### Critical Pitfalls
+### Critical Pitfalls (Revised for HL Study)
 
-**Top 5 pitfalls distilled from all research:**
+**Top 5 pitfalls for the Mailhot_V1 HL cohort:**
 
-1. **SAS Date vs. Datetime confusion (CRITICAL)** — A datetime value of 1,893,456,000 treated as days produces year 5,185,000+. A date value of 22,000 treated as seconds gives 6 hours after midnight on 1960-01-01. **Prevention:** Check magnitude (dates <30,000; datetimes >100,000), check column name suffixes (`_DT` vs `_DTTM`), always spot-check converted values.
+1. **Partner data heterogeneity (CRITICAL for insurance study)** — 15 partners with wildly different data availability. BND, UCI, UMI have **no PAYER_TYPE_PRIMARY** — the core variable for an insurance inequities study. FLM is claims-only (no labs, vitals, prescribing). VRT has death data only. CHP has no ENCOUNTERID in labs. **Prevention:** Report all analyses stratified by SOURCE; document which partners contribute to which analyses; do not pool across partners without accounting for availability.
 
-2. **HIPAA violations from insecure data handling (CRITICAL)** — OneFlorida+ LDS data contains PHI (full dates, ZIP codes, pseudoidentified PATIDs). Storing on `/home` (which is backed up and potentially accessible) or transferring to local machines violates the Data Use Agreement. **Prevention:** Store exclusively on `/blue` or `/orange`; no local copies; suppress cell counts < 11 in all outputs.
+2. **HIPAA violations from insecure data handling (CRITICAL)** — OneFlorida+ LDS data contains PHI (full dates, ZIP codes, pseudoidentified PATIDs). **Prevention:** Store exclusively on `/blue` or `/orange`; no local copies; suppress cell counts 1–10 in all outputs (existing `mask_small_cells` function from HL-EDA).
 
-3. **Silent type inference failures on large CSVs (HIGH)** — Pandas samples only early rows for dtype inference. If early rows have missing dates (blanks), columns get classified as `object` or `float64`, causing downstream conversion failures or spurious decimal noise. **Prevention:** Explicitly specify dtypes when reading (`dtype={'ADMIT_DT': 'Float64'}`); use `errors='coerce'` on all date conversions.
+3. **ICD-9→ICD-10 mapping by specific partners (HIGH)** — AMS and UMI mapped all historical ICD-9 codes to ICD-10, meaning pre-2015 C81\* codes from these partners are actually converted 201\* codes. This inflates ICD-10 counts and breaks ICD version-date concordance checks. **Prevention:** Flag AMS/UMI records with `ICD_MAPPED=True`; exclude from concordance analysis; report separately.
 
-4. **Conflating PCORnet missing value codes (MODERATE)** — `NI` (no information), `UN` (unknown), `OT` (other), and true NULL have different research implications. Treating them all as "missing" loses semantic meaning. **Prevention:** Preserve original codes in separate columns; document handling decisions; check `RAW_*` fields for `OT` values.
+4. **Tumor registry data severely limited (MODERATE)** — Only ORL (stale, Dec 2020), TMH (stale, Feb 2019), and UFH (May 2024) have TUMOR_REGISTRY data. Staging, histology, and NAACCR treatment data is unavailable for ~80% of the cohort. **Prevention:** Treat TR analysis as supplementary; do not make staging a required stratification variable.
 
-5. **Over-requesting HPC resources (MODERATE)** — Requesting 128GB memory for a job that uses 8GB wastes group allocation and delays scheduling. Conversely, under-requesting causes out-of-memory kills. **Prevention:** Test with a subset first; check actual usage with `sacct -j <id> --format=MaxRSS`; add 15-20% buffer; use Polars/DuckDB to reduce memory needs.
+5. **Age masking breaks temporal logic (MODERATE)** — Patients >89 have BIRTH_DATE=01JAN1900 and AGE_AT_DIAGNOSIS=200. Birth-before-event checks will flag these as violations; age calculations will produce impossible ages. **Prevention:** Check `BIRTH_DATE_MASKED` flag before temporal/age calculations; fold masked ages into 65+ band (existing HL-EDA approach).
 
 ---
 
 ## Implications for Roadmap
 
-Based on the combined research, the project decomposes into 6 phases with clear dependencies. The first three phases are sequential prerequisites; phases 4-5 can partially overlap; phase 6 depends on all prior phases.
+See `ROADMAP.md` for the full revised roadmap. Key changes from the initial generic roadmap:
 
-### Phase 1: Environment Setup & Security
+1. **Phase 1 is much shorter** (0.5–1 day vs. 1–2 days) because the HL-EDA project already has a working conda env, SLURM templates, and HPC config. We extend rather than rebuild.
 
-**Rationale:** Nothing else can proceed without a working compute environment and HIPAA-compliant storage configuration. This is the foundation.
-**Delivers:** Reproducible conda environment on HiPerGator with all tools installed; verified secure storage paths; SLURM job templates.
-**Stack elements:** Conda/Mamba, Python 3.11, Polars, DuckDB, PyArrow, Pandas, ipykernel
-**Addresses:** HiPerGator constraints (storage, modules, conda config); HIPAA compliance (data placement on `/blue`)
-**Avoids:** Pitfall #2 (HIPAA violations), Pitfall #5 (resource misallocation)
+2. **Phase 2 uses string parsing, not epoch arithmetic** — SAS DATE9. strings ("01JAN2020"), not integer days since 1960. This simplifies conversion significantly.
 
-**Key tasks:**
-- Create conda environment with full data stack
-- Verify storage configuration (`/blue` paths, conda env location)
-- Create SLURM job template scripts (batch and interactive)
-- Register Jupyter kernel for Open OnDemand
-- Document data access protocols and security requirements
+3. **Phase 3 adds HL cohort verification** — confirm the 9,331 patients match the C81\*/201\* inclusion criteria at 2+ encounters. Uses CDM v6.1 (not v7.0).
 
-### Phase 2: Data Intake & Format Conversion
+4. **Phase 4 adds HL-specific validation** — ICD-9→ICD-10 partner exceptions (AMS, UMI), tumor registry NAACCR staging validation, HL-specific outcome code validation (from `concepts.py`), insurance variable completeness checks.
 
-**Rationale:** Raw CSV files with SAS dates are the input; Parquet files with proper date types are the intermediate format that makes everything else fast. This phase is the critical path bottleneck — all subsequent work depends on having properly converted data.
-**Delivers:** Parquet versions of all input CSVs with SAS dates converted to proper date types; file inventory with row counts, column counts, and size.
-**Stack elements:** Polars (`read_csv`, `write_parquet`), SAS date conversion formulas
-**Addresses:** CSV-to-Parquet conversion (10-100x speedup for all future reads); SAS date/datetime detection and conversion
-**Avoids:** Pitfall #1 (date/datetime confusion), Pitfall #3 (type inference failures)
+5. **Phase 5 adds partner harmonization** — flags for claims-only (FLM), death-only (VRT), ICD-mapped (AMS, UMI) partners. Extends HL-EDA dedup logic with flag columns instead of dropping records.
 
-**Key tasks:**
-- Inventory all CSV files (map to PCORnet CDM tables)
-- Detect which columns are SAS dates vs. SAS datetimes (magnitude check + column name heuristics)
-- Convert SAS dates/datetimes to proper date types
-- Run immediate validation (range checks, epoch-date detection, spot-check conversions)
-- Write Parquet files with correct types
-- Log conversion summary (files, rows, columns, date columns found, issues)
+6. **Phase 6 creates HL-specific derived variables** — age at first HL diagnosis, HL subtype from C81.x, diagnosis-to-treatment interval, payer at diagnosis, insurance continuity. All stratified by partner.
 
-### Phase 3: Structural Validation
-
-**Rationale:** Before checking values, verify the structural integrity of the data — are the right tables present, do the schemas match, are keys valid? This catches gross data delivery issues early.
-**Delivers:** Structural validation report; confirmed PCORnet CDM version; key integrity assessment.
-**Stack elements:** Polars/DuckDB for scanning Parquet files; PCORnet CDM v7.0 spec as reference
-**Addresses:** Schema validation, primary/foreign key integrity, row-level completeness assessment
-**Avoids:** Pitfall #4 (missing value code conflation — set up proper handling here)
-
-**Key tasks:**
-- Validate column names against PCORnet CDM spec
-- Check HARVEST table for CDM version and date management strategy
-- Verify PATID uniqueness in DEMOGRAPHIC; PATID presence across all tables
-- Verify ENCOUNTERID referential integrity
-- Calculate per-column completeness rates
-- Classify missing value codes (NI/UN/OT/NULL) and document handling rules
-
-### Phase 4: Value & Temporal Validation
-
-**Rationale:** Now that structure is confirmed, validate the actual data values. This is the deepest and most domain-specific phase, requiring healthcare knowledge for plausibility ranges.
-**Delivers:** Value validation report with flagged records; date consistency assessment; code validation results.
-**Stack elements:** Polars for fast filtering/aggregation; pandas for validation function prototyping
-**Addresses:** Coded field validation, clinical code format checks, vital signs and lab plausibility, date consistency rules, ICD version-date concordance
-**Avoids:** Pitfall #1 (catches any remaining date conversion errors via range checks)
-
-**Key tasks:**
-- Validate PCORnet value sets (ENC_TYPE, DX_TYPE, PX_TYPE, SEX, RACE, etc.)
-- Validate clinical code formats (ICD-10-CM, CPT/HCPCS, NDC, LOINC, RxNorm)
-- Apply vital signs plausibility ranges
-- Apply lab result plausibility ranges (LOINC-specific with unit awareness)
-- Run full temporal validation suite (discharge ≥ admission, events within encounter windows, birth precedes all)
-- Check ICD-9 vs ICD-10 date concordance (ICD-10 after Oct 1, 2015)
-
-### Phase 5: Deduplication & Cross-Table Consistency
-
-**Rationale:** Duplicates and cross-table inconsistencies require the validated data from Phase 4 as input. This phase resolves record-level issues.
-**Delivers:** Deduplicated dataset with flags (no records deleted); cross-table consistency report.
-**Stack elements:** Polars for hashing and groupby operations; DuckDB for cross-table SQL joins
-**Addresses:** Exact and near-duplicate detection, encounter fragmentation, demographic consistency, encounter-event alignment
-
-**Key tasks:**
-- Detect exact duplicates per table (hash all non-ID columns)
-- Detect near-duplicates using table-specific keys (e.g., PATID + ENCOUNTERID + DX + DX_TYPE for diagnoses)
-- Check demographic consistency across encounters (single SEX, BIRTH_DATE per PATID)
-- Verify encounter-event alignment (diagnosis/procedure dates within admission window)
-- Flag, don't delete — add IS_DUPLICATE and consistency flag columns
-
-### Phase 6: Data Quality Reporting & Analytic Dataset Preparation
-
-**Rationale:** Consolidate all findings into a reproducible data quality report and prepare clean datasets for analysis. This is the deliverable phase.
-**Delivers:** Comprehensive data quality report (completeness, conformance, plausibility, persistence); clean Parquet files with quality flags; analytic variable definitions.
-**Stack elements:** Pandas for report generation; Polars for final Parquet output; matplotlib/seaborn for quality visualizations
-**Addresses:** DQ reporting standards (Kahn framework / PCORnet four-dimension model); derived variable creation (age, LOS, time-to-event); small cell suppression
-
-**Key tasks:**
-- Generate completeness report (per-table, per-field)
-- Generate conformance report (invalid code counts)
-- Generate plausibility report (out-of-range value counts, distributions)
-- Create derived analytic variables (age, length of stay, age groups)
-- Apply cleaning rules (set implausible values to NULL with flag columns)
-- Write final clean Parquet files
-- Document all exclusion criteria and cleaning decisions
-
-### Phase Ordering Rationale
-
-- **Phases 1→2→3 are strictly sequential.** You cannot load data without an environment (Phase 1), cannot validate structure without loaded data (Phase 2→3).
-- **Phase 4 depends on Phase 3** because structural validation may reveal schema issues (wrong CDM version, missing tables) that change how value validation works.
-- **Phase 5 depends on Phase 4** because deduplication logic uses validated values (e.g., validated dates for temporal overlap detection).
-- **Phase 6 depends on all prior phases** as it consolidates and reports on everything.
-- **Parquet conversion in Phase 2 is the critical optimization** — it makes Phases 3-6 dramatically faster since all subsequent reads use Parquet instead of CSV.
-- **HIPAA compliance spans all phases** but is configured in Phase 1 and enforced throughout.
-
-### Research Flags
-
-**Phases likely needing deeper research during planning:**
-- **Phase 4 (Value & Temporal Validation):** Requires study-specific plausibility ranges and may need reference code set files (ICD-10-CM annual releases, LOINC database). The exact PCORnet CDM version and site-specific date management strategies (from HARVEST table) will shape validation rules.
-- **Phase 6 (Reporting & Analytic Prep):** Study-specific analytic variable definitions depend on the research question. Small cell suppression rules and publication requirements need confirmation with OneFlorida+ data governance.
-
-**Phases with standard patterns (skip deep research):**
-- **Phase 1 (Environment Setup):** Well-documented HiPerGator procedures; conda environment creation is routine.
-- **Phase 2 (Data Intake & Conversion):** SAS date conversion and CSV-to-Parquet are solved problems with verified code patterns from the research.
-- **Phase 3 (Structural Validation):** PCORnet CDM spec is published and stable; key integrity checks are standard.
-- **Phase 5 (Deduplication):** Established patterns for healthcare duplicate detection; PCORnet has documented common patterns.
+**Total estimated effort: 10.5–16 working days** (~2.5–3.5 weeks), down from 13–20 days in the generic roadmap.
 
 ---
 
@@ -243,14 +154,20 @@ Based on the combined research, the project decomposes into 6 phases with clear 
 
 **Overall confidence:** HIGH
 
-### Gaps to Address
+### Gaps Resolved by HL-EDA Analysis
 
-- **Exact file inventory:** Which PCORnet CDM tables are included in the data delivery? File sizes and row counts are unknown until Phase 2.
-- **SAS date vs. datetime per column:** Without a data dictionary or PROC CONTENTS output, date/datetime detection relies on magnitude heuristics and column name patterns. Request metadata from data provider if available.
-- **HiPerGator group-specific quotas:** The `/blue` storage allocation and QoS limits depend on the research group's investment. Verify with `blue_quota` and `slurmInfo` commands.
-- **CDM version:** The HARVEST table will confirm whether data is CDM v6.0 or v7.0, which affects which tables and fields exist.
-- **Special missing values:** If the SAS source used `.A`–`.Z` special missing values, these are lost in CSV export. If missingness reasons matter for the study, request SAS7BDAT files or companion documentation.
-- **SQL availability:** HiPerGator does not have MySQL/PostgreSQL as a service. DuckDB (installable via conda) provides full SQL capabilities as an embedded database — this fully resolves the user's question about SQL availability.
+- **File inventory:** All 22 CSVs are known from `datastructure.txt`. File sizes will be confirmed in Phase 2.
+- **Date format:** SAS DATE9. strings confirmed (not integer dates). HL-EDA's `parse_sas_dates()` already handles this.
+- **CDM version:** v6.1, confirmed from DatasetCoverPage.
+- **HPC config:** SLURM account `erin.mobley-hl.bcu`, 64GB memory, 2hr time limit already tested in HL-EDA.
+- **SQL availability:** DuckDB via conda resolves this.
+
+### Remaining Gaps
+
+- **Chemotherapy regimen codes:** Need RXNORM_CUI or NDC lists for ABVD, BEACOPP, and other HL regimens if treatment-specific analysis is in scope.
+- **Study endpoints:** What specific insurance inequities are being measured? Time to treatment, treatment type, surveillance adherence, survival? This shapes Phase 6 derived variables.
+- **Insurance category mapping:** How to group PAYER_TYPE_PRIMARY into analytically useful categories (private, Medicaid, Medicare, uninsured, other).
+- **TUMOR_REGISTRY date formats:** May use NAACCR YYYYMMDD rather than SAS DATE9. — needs testing in Phase 2.
 
 ---
 

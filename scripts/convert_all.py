@@ -15,12 +15,14 @@ import sys
 import time
 from pathlib import Path
 
+import polars as pl
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.load.config import load_config
 from src.load.convert import convert_table, write_inventory
-from src.load.schema import parse_datastructure
+from src.load.schema import parse_datastructure, resolve_table_name
 
 
 def main(config_path: Path | None = None) -> None:
@@ -48,21 +50,45 @@ def main(config_path: Path | None = None) -> None:
 
     for i, filename in enumerate(table_filenames, 1):
         csv_path = paths.data_root / filename
-        table_name = filename.split("_Mailhot_V1")[0]
+        stem = Path(filename).stem
+        table_name = resolve_table_name(stem)
+        parquet_path = paths.parquet_dir / (stem + ".parquet")
 
         print(f"\n{'=' * 60}")
         print(f"  [{i}/{len(table_filenames)}] {table_name}")
         print(f"  File: {filename}")
         print(f"{'=' * 60}")
 
-        try:
-            record = convert_table(csv_path, paths.parquet_dir)
-        except Exception as exc:
-            print(f"\n  [FATAL] {table_name} failed: {exc}")
-            import traceback
-            traceback.print_exc()
-            print(f"\n  Stopping — cannot continue after table failure.")
-            sys.exit(1)
+        if (
+            parquet_path.exists()
+            and csv_path.exists()
+            and csv_path.stat().st_mtime <= parquet_path.stat().st_mtime
+        ):
+            parquet_df = pl.read_parquet(parquet_path)
+            record = {
+                "table_name": table_name,
+                "csv_file": filename,
+                "parquet_file": parquet_path.name,
+                "csv_rows": parquet_df.height,
+                "parquet_rows": parquet_df.height,
+                "csv_bytes": csv_path.stat().st_size,
+                "parquet_bytes": parquet_path.stat().st_size,
+                "date_columns_found": 0,
+                "date_columns_converted": 0,
+                "date_columns_kept_string": 0,
+                "elapsed_seconds": 0,
+                "status": "skipped (up-to-date)",
+            }
+            print(f"  [SKIP] {table_name} — Parquet up-to-date (CSV mtime <= Parquet mtime)")
+        else:
+            try:
+                record = convert_table(csv_path, paths.parquet_dir)
+            except Exception as exc:
+                print(f"\n  [FATAL] {table_name} failed: {exc}")
+                import traceback
+                traceback.print_exc()
+                print(f"\n  Stopping — cannot continue after table failure.")
+                sys.exit(1)
 
         inventory_records.append(record)
         total_csv_rows += record["csv_rows"]

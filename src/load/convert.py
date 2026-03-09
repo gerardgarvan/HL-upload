@@ -13,6 +13,8 @@ from pathlib import Path
 
 import polars as pl
 
+from src.load.schema import resolve_table_name
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -203,7 +205,7 @@ def convert_table(csv_path: Path, parquet_dir: Path) -> dict:
     csv_bytes = csv_path.stat().st_size
 
     stem = csv_path.stem                       # e.g. DEMOGRAPHIC_Mailhot_V1
-    table_name = stem.split("_Mailhot_V1")[0]  # e.g. DEMOGRAPHIC
+    table_name = resolve_table_name(stem)      # e.g. DEMOGRAPHIC or LAB_RESULT_CM
     parquet_filename = stem + ".parquet"
 
     df = pl.read_csv(

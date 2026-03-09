@@ -466,6 +466,72 @@ Plans:
 
 ---
 
+### Phase 7: Add Modality Flags from Outcomes.xlsx
+
+**Goal:** Use the Outcomes sheet as a code-to-modality mapping (CPT, HCPCS, ICD-10, LOINC). Flag patients when matching codes are found in PROCEDURES, LAB_RESULT_CM, DIAGNOSIS. No join to Outcomes—it defines which codes map to which modality flags.
+
+**Modalities:** Stem cell transplant, Mammogram, Breast MRI, Echocardiogram, Stress test, Electrocardiogram, MUGA, Pulmonary function test, TSH, Complete blood count.
+
+**Success Criteria:**
+- [ ] Outcomes sheet loaded; code-to-modality mapping documented (CPT, HCPCS, ICD-10, LOINC)
+- [ ] Each modality: scan PROCEDURES (PX), LAB_RESULT_CM (LAB_LOINC), DIAGNOSIS (DX) for matching codes
+- [ ] Modality flag columns added to patient_level.parquet (e.g., `MODALITY_SCT`, `MODALITY_MAMMO`, …)
+- [ ] Flag = 1 if patient has ≥1 matching code, else 0
+- [ ] Modality-stratified counts available for reporting
+
+**Dependencies:** Phase 6 (clean dataset and patient_level.parquet).
+
+**Source:** Outcomes.xlsx (project root), Outcomes sheet only.
+
+**Estimated Effort:** 1–2 days
+
+**Key Tasks:**
+1. Load Outcomes sheet; document columns (modality name, code type, code values)
+2. Build code lookup: CPT/HCPCS → PROCEDURES.PX, LOINC → LAB_RESULT_CM.LAB_LOINC, ICD-10 → DIAGNOSIS.DX
+3. Per modality, flag patients with ≥1 matching code in any relevant table
+4. Add modality flags to patient_level.parquet
+5. Document flag definitions and code mappings
+
+**Output Files:**
+- `data/derived/patient_level.parquet` — updated with modality flags
+- `reports/modality_flags.md` — code-to-modality mapping, flag definitions
+- `src/clean/outcomes_flags.py` — modality flag derivation (read Outcomes, scan CDM, add flags)
+
+**Plans:** 1 plan
+- [ ] 07-01-PLAN.md — Load Outcomes, build code lookup, add_modality_flags, modality_flags.md, pipeline integration
+
+---
+
+## Post-Phase 7 Milestones
+
+### Concerns Remediation (CONCERNS.md)
+
+Addresses technical debt and quality gaps from [.planning/codebase/CONCERNS.md](codebase/CONCERNS.md):
+
+- **Milestone:** [.planning/milestones/MILESTONE-CONCERNS.md](milestones/MILESTONE-CONCERNS.md)
+- **Scope:** openpyxl, LAB_RESULT vs LAB_RESULT_CM, path config, small-cell audit, Outcomes.xlsx/date docs, pytest, ruff/black, incremental convert
+- **Effort:** ~5.5 days across 11 tasks (prioritized Tiers 1–5)
+- **Phase 8:** Tiers 1–2 (critical path, security) — complete
+- **Phase 9:** Tiers 3–5 (fragile docs, tests, tooling, incremental convert) — complete
+
+### Phase 10: CI, Pre-commit, and Pipeline Hardening
+
+**Goal:** Add pre-commit hooks, CI placeholder, Makefile, and mark CONCERNS as resolved.
+
+**Success Criteria:**
+- [ ] Pre-commit runs ruff (check + format) and pytest before commit
+- [ ] `make test`, `make lint`, `make ci` work
+- [ ] GitHub Actions ci.yml runs lint and test on push/PR
+- [ ] CONCERNS.md updated with Phase 8–9 resolved markers
+- [ ] STATE.md and ROADMAP current
+
+**Dependencies:** Phase 9
+
+**Plans:** 1 plan
+- [ ] 10-01-PLAN.md — Pre-commit, Makefile, CI, CONCERNS/STATE/ROADMAP updates
+
+---
+
 ## Risk Register
 
 | # | Risk | Phase | Likelihood | Impact | Mitigation |
@@ -526,6 +592,9 @@ Phase 5: Deduplication, Cross-Table Consistency & Partner Harmonization
     │
     ▼
 Phase 6: Data Quality Report & Clean Dataset Assembly
+    │
+    ▼
+Phase 7: Add Modality Flags from Outcomes.xlsx
 ```
 
 **All phases are sequential.** Each depends on outputs of the previous phase.
@@ -544,7 +613,8 @@ Phase 6: Data Quality Report & Clean Dataset Assembly
 | 4. HL-Specific Value & Temporal Validation | 3–4 days | 6.5–10 days |
 | 5. Deduplication & Partner Harmonization | 2–3 days | 8.5–13 days |
 | 6. Data Quality Report & Clean Dataset Assembly | 2–3 days | 10.5–16 days |
-| **Total** | **10.5–16 working days** | ~2.5–3.5 weeks |
+| 7. Add Modality Flags from Outcomes.xlsx | 1–2 days | 11.5–18 days |
+| **Total** | **11.5–18 working days** | ~3–4 weeks |
 
 Faster than the generic roadmap because Phase 1 reuses existing infrastructure and existing HL-EDA code accelerates every subsequent phase.
 

@@ -3,6 +3,15 @@
 
 from pathlib import Path
 
+# Alias: datastructure uses LAB_RESULT_Mailhot_V1.csv; code expects table LAB_RESULT_CM
+FILENAME_TO_TABLE_ALIAS: dict[str, str] = {"LAB_RESULT": "LAB_RESULT_CM"}
+
+
+def resolve_table_name(stem: str) -> str:
+    """Map filename stem to CDM table name. LAB_RESULT -> LAB_RESULT_CM."""
+    table_part = stem.split("_Mailhot_V1")[0]
+    return FILENAME_TO_TABLE_ALIAS.get(table_part, table_part)
+
 
 def parse_datastructure(path: Path) -> tuple[str | None, list[str]]:
     """Parse datastructure.txt for data root path and table filenames.

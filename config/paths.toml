@@ -14,5 +14,7 @@ datastructure_path = "datastructure.txt"
 valuesets_path = "valuesets.csv"
 
 [paths.output]
-parquet_dir = "hl-clean/parquet"
-logs_dir = "hl-clean/logs"
+# Relative to scratch_root (not project root). Resolved: scratch_root / parquet_dir
+# e.g. /blue/erin.mobley-hl.bcu/hpc-upload/parquet
+parquet_dir = "hpc-upload/parquet"
+logs_dir = "hpc-upload/logs"

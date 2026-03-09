@@ -1,0 +1,26 @@
+# HL data loading & cleaning environment
+# Extends HL-EDA base env with Polars and DuckDB for CSV-to-Parquet pipeline
+#
+# DRAFT: This spec lists target packages. After installation on HPC, run:
+#   mamba env export --no-builds > environment.yml
+# to capture exact resolved versions.
+
+name: hl-eda
+
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.11
+  - pandas>=2.2
+  - pyarrow>=18.0
+  - polars
+  - duckdb
+  - jupyter
+  - matplotlib>=3.9
+  - seaborn>=0.13
+  - pip
+  - pip:
+    - jinja2>=3.1
+    - tabulate

@@ -1,5 +1,7 @@
 """Phase 6: Assemble clean Parquet, derived patient-level, and reports.
 
+Small-cell: all report counts use flag_small_cell per REQ-05.
+
 Entry point for assembling validated+flagged Parquet into parquet_clean/,
 building patient_level.parquet, and generating DATA_QUALITY_REPORT.md and
 CLEANING_DECISIONS.md.
@@ -20,7 +22,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.load.config import load_config
-from src.load.schema import parse_datastructure
+from src.load.schema import parse_datastructure, resolve_table_name
+from src.clean.outcomes_flags import add_modality_flags
 from src.report.quality_report import (
     build_patient_level_derived,
     aggregate_dq_metrics,
@@ -41,7 +44,7 @@ def _build_table_map(
     table_map: dict[str, Path] = {}
     for filename in table_filenames:
         stem = Path(filename).stem
-        table_name = stem.split("_Mailhot_V1")[0]
+        table_name = resolve_table_name(stem)
         parquet_path = parquet_dir / (stem + ".parquet")
         table_map[table_name] = parquet_path
     return table_map
@@ -88,6 +91,15 @@ def main(config_path: Path | None = None) -> None:
     # Build patient_level.parquet
     print(f"\n--- Build patient_level.parquet ---")
     patient_df = build_patient_level_derived(table_map)
+
+    # Add modality flags from Outcomes.xlsx (Phase 7)
+    outcomes_path = PROJECT_ROOT / "Outcomes.xlsx"
+    if outcomes_path.exists():
+        patient_df = add_modality_flags(patient_df, table_map, outcomes_path)
+        print(f"  Modality flags added from {outcomes_path.name}")
+    else:
+        print(f"  SKIP modality flags (Outcomes.xlsx not found)")
+
     patient_path = derived_dir / "patient_level.parquet"
     patient_df.write_parquet(patient_path, compression="snappy")
     print(f"  Rows: {patient_df.height:,}")

@@ -1,0 +1,18 @@
+# HL data loading & cleaning path configuration
+# Data lives on HPC: orange (read-only source), blue (scratch/output)
+# Edit paths for staged subset or different HPC user dirs
+
+[paths]
+# Source data root (OneFlorida+ PCORnet Mailhot cohort)
+data_root = "/orange/erin.mobley-hl.bcu/Mailhot_V1_20250915"
+
+# Scratch and derived outputs
+scratch_root = "/blue/erin.mobley-hl.bcu"
+
+# Paths relative to project root (where config/ lives)
+datastructure_path = "datastructure.txt"
+valuesets_path = "valuesets.csv"
+
+[paths.output]
+parquet_dir = "hpc-upload/parquet"
+logs_dir = "hpc-upload/logs"

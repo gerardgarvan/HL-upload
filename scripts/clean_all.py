@@ -1,5 +1,7 @@
 """Phase 5: Deduplication, cross-table consistency, partner harmonization.
 
+Small-cell: all report counts use flag_small_cell/_suppress per REQ-05.
+
 Usage: python scripts/clean_all.py [config/paths.toml]
 
 Designed for HPC interactive sessions (srun --pty bash).
@@ -14,7 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.load.config import load_config
-from src.load.schema import parse_datastructure
+from src.load.schema import parse_datastructure, resolve_table_name
 from src.validate.structural import (
     PATID_COL,
     SMALL_CELL_THRESHOLD,
@@ -56,7 +58,7 @@ def _build_table_map(
     table_map: dict[str, Path] = {}
     for filename in table_filenames:
         stem = Path(filename).stem
-        table_name = stem.split("_Mailhot_V1")[0]
+        table_name = resolve_table_name(stem)
         parquet_path = parquet_dir / (stem + ".parquet")
         table_map[table_name] = parquet_path
     return table_map
