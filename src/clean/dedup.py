@@ -52,6 +52,9 @@ CLEAN_FLAG_COLS: set[str] = {
     "ICD_MAPPED",
     "CLAIMS_ONLY",
     "DEATH_ONLY",
+    "FLAG_HL_DX",
+    "FLAG_SURVIVORSHIP_DX",
+    "FLAG_CANCER_PROVIDER",
 }
 
 CLEAN_FLAG_PREFIX: str = "_con_"

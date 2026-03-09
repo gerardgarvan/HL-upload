@@ -29,6 +29,7 @@ from src.clean.dedup import (
     flag_events_outside_encounters,
     write_cleaned,
 )
+from src.clean.flags_diagnosis_provider import add_diagnosis_flags, add_provider_flags
 from src.clean.harmonize import (
     PARTNER_FLAGS,
     add_partner_flags,
@@ -471,6 +472,12 @@ def main(config_path: Path | None = None) -> None:
         if table_name == "ENCOUNTER" and enrollment_ref is not None:
             df = flag_encounters_outside_enrollment(df, enrollment_ref)
             df = flag_no_enrollment(df, enrollment_ref)
+
+        # (h2) DIAGNOSIS and PROVIDER flags
+        if table_name == "DIAGNOSIS":
+            df = add_diagnosis_flags(df)
+        if table_name == "PROVIDER":
+            df = add_provider_flags(df)
 
         # (i) Write flagged Parquet back
         stats = write_cleaned(df, pq_path)
