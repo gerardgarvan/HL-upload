@@ -1,12 +1,21 @@
 # HL data loading & cleaning — diagnosis and provider flags
 """Add FLAG_HL_DX, FLAG_SURVIVORSHIP_DX (DIAGNOSIS) and FLAG_CANCER_PROVIDER (PROVIDER).
 
-Survivorship codes: user-provided list per study protocol (V87.41/42/43/46, V15.3,
-Z92.21-25, Z92.3, Z08*, Z85*). For ENCOUNTER–PROVIDER linkage: join ENCOUNTER.PROVIDERID
-to PROVIDER and filter FLAG_CANCER_PROVIDER=1 for "encounter with cancer provider."
+FLAG_HL_DX: uses same 149-code set as cohort (ALL_HL_CODES/ALL_HL_NORMALIZED);
+excludes 201.3x and C81.5x/C81.6x. Survivorship codes: user-provided list per study
+protocol (V87.41/42/43/46, V15.3, Z92.21-25, Z92.3, Z08*, Z85*). For ENCOUNTER–PROVIDER
+linkage: join ENCOUNTER.PROVIDERID to PROVIDER and filter FLAG_CANCER_PROVIDER=1 for
+"encounter with cancer provider."
 """
 
 import polars as pl
+
+from src.validate.cohort import (
+    ICD9_HL_CODES,
+    ICD9_HL_NORMALIZED,
+    ICD10_HL_CODES,
+    ICD10_HL_NORMALIZED,
+)
 
 # DX_TYPE supports PCORnet numeric (09/10) and full labels (ICD-9-CM/ICD-10-CM)
 ICD9_DX_TYPES: set[str] = {"09", "ICD-9-CM", "9"}
@@ -45,7 +54,7 @@ def _is_icd10_type() -> pl.Expr:
 def add_diagnosis_flags(df: pl.DataFrame) -> pl.DataFrame:
     """Add FLAG_HL_DX and FLAG_SURVIVORSHIP_DX to DIAGNOSIS.
 
-    FLAG_HL_DX: 1 when (DX_TYPE in ICD9 and DX starts with 201) or (DX_TYPE in ICD10 and DX starts with C81).
+    FLAG_HL_DX: 1 when DX is in cohort HL set (149 codes, excludes 201.3x and C81.5x/C81.6x).
     FLAG_SURVIVORSHIP_DX: 1 when DX is in survivorship set (V87.41/42/43/46, V15.3, Z92.21-25, Z92.3, Z08*, Z85*).
     """
     if "DX" not in df.columns:
@@ -53,23 +62,25 @@ def add_diagnosis_flags(df: pl.DataFrame) -> pl.DataFrame:
     dx_norm = pl.col("DX").fill_null("").str.to_uppercase().str.replace_all(r"\.", "")
     has_dx_type = "DX_TYPE" in df.columns
 
-    # FLAG_HL_DX
+    # FLAG_HL_DX — use cohort's exact 149-code set (no prefix match)
+    icd9_codes = list(ICD9_HL_CODES)
+    icd9_norm = list(ICD9_HL_NORMALIZED)
+    icd10_codes = list(ICD10_HL_CODES)
+    icd10_norm = list(ICD10_HL_NORMALIZED)
+
+    in_icd9_hl = pl.col("DX").is_in(icd9_codes) | dx_norm.is_in(icd9_norm)
+    in_icd10_hl = pl.col("DX").is_in(icd10_codes) | dx_norm.is_in(icd10_norm)
+
     if has_dx_type:
         flag_hl = (
-            pl.when(_is_icd9_type() & pl.col("DX").str.starts_with("201"))
+            pl.when(_is_icd9_type() & in_icd9_hl)
             .then(pl.lit(1, dtype=pl.Int8))
-            .when(_is_icd10_type() & dx_norm.str.starts_with("C81"))
+            .when(_is_icd10_type() & in_icd10_hl)
             .then(pl.lit(1, dtype=pl.Int8))
             .otherwise(pl.lit(0, dtype=pl.Int8))
         )
     else:
-        flag_hl = (
-            pl.when(pl.col("DX").str.starts_with("201"))
-            .then(pl.lit(1, dtype=pl.Int8))
-            .when(dx_norm.str.starts_with("C81"))
-            .then(pl.lit(1, dtype=pl.Int8))
-            .otherwise(pl.lit(0, dtype=pl.Int8))
-        )
+        flag_hl = pl.when(in_icd9_hl | in_icd10_hl).then(pl.lit(1, dtype=pl.Int8)).otherwise(pl.lit(0, dtype=pl.Int8))
     df = df.with_columns(flag_hl.alias("FLAG_HL_DX"))
 
     # FLAG_SURVIVORSHIP_DX
