@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import polars as pl
-import pytest
 
 from src.validate.structural import (
     check_patid_integrity,

@@ -20,39 +20,65 @@ from src.load.schema import resolve_table_name
 # ---------------------------------------------------------------------------
 
 KNOWN_DATE_COLS: set[str] = {
-    "BIRTH_DATE", "ADMIT_DATE", "DISCHARGE_DATE", "DX_DATE", "PX_DATE",
-    "MEASURE_DATE", "SPECIMEN_DATE", "RESULT_DATE", "RX_ORDER_DATE",
-    "RX_START_DATE", "RX_END_DATE", "DEATH_DATE", "ONSET_DATE",
-    "REPORT_DATE", "RESOLVE_DATE", "DISPENSE_DATE", "ENR_START_DATE",
-    "ENR_END_DATE", "MEDADMIN_START_DATE", "MEDADMIN_STOP_DATE",
-    "VX_RECORD_DATE", "VX_ADMIN_DATE", "VX_EXP_DATE",
-    "ADDRESS_PERIOD_START", "ADDRESS_PERIOD_END",
-    "DATE_OF_BIRTH", "DATE_OF_DIAGNOSIS",
+    "BIRTH_DATE",
+    "ADMIT_DATE",
+    "DISCHARGE_DATE",
+    "DX_DATE",
+    "PX_DATE",
+    "MEASURE_DATE",
+    "SPECIMEN_DATE",
+    "RESULT_DATE",
+    "RX_ORDER_DATE",
+    "RX_START_DATE",
+    "RX_END_DATE",
+    "DEATH_DATE",
+    "ONSET_DATE",
+    "REPORT_DATE",
+    "RESOLVE_DATE",
+    "DISPENSE_DATE",
+    "ENR_START_DATE",
+    "ENR_END_DATE",
+    "MEDADMIN_START_DATE",
+    "MEDADMIN_STOP_DATE",
+    "VX_RECORD_DATE",
+    "VX_ADMIN_DATE",
+    "VX_EXP_DATE",
+    "ADDRESS_PERIOD_START",
+    "ADDRESS_PERIOD_END",
+    "DATE_OF_BIRTH",
+    "DATE_OF_DIAGNOSIS",
 }
 
 DATE_NAME_RE = re.compile(r"(_DATE|_DT)$|^DATE_|^DT_|_DATE_", re.IGNORECASE)
 
-DATE9_RE = re.compile(r"^\d{2}[A-Za-z]{3}\d{4}$")          # 01JAN2020
+DATE9_RE = re.compile(r"^\d{2}[A-Za-z]{3}\d{4}$")  # 01JAN2020
 DATETIME_RE = re.compile(r"^\d{2}[A-Za-z]{3}\d{4}:\d{2}:\d{2}:\d{2}$")  # 01JAN2020:14:30:00
-YYYYMMDD_RE = re.compile(r"^\d{8}$")                        # 20200101
+YYYYMMDD_RE = re.compile(r"^\d{8}$")  # 20200101
 
 MIN_DATE = date(1900, 1, 1)
 MAX_DATE = date(2026, 12, 31)
 
 INVENTORY_FIELDS = [
-    "table_name", "csv_file", "parquet_file",
-    "csv_rows", "parquet_rows", "csv_bytes", "parquet_bytes",
-    "date_columns_found", "date_columns_converted",
-    "date_columns_kept_string", "elapsed_seconds", "status",
+    "table_name",
+    "csv_file",
+    "parquet_file",
+    "csv_rows",
+    "parquet_rows",
+    "csv_bytes",
+    "parquet_bytes",
+    "date_columns_found",
+    "date_columns_converted",
+    "date_columns_kept_string",
+    "elapsed_seconds",
+    "status",
 ]
 
 # ---------------------------------------------------------------------------
 # Date detection
 # ---------------------------------------------------------------------------
 
-def detect_date_columns(
-    df: pl.DataFrame, sample_size: int = 200
-) -> dict[str, str]:
+
+def detect_date_columns(df: pl.DataFrame, sample_size: int = 200) -> dict[str, str]:
     """Auto-detect date columns using name heuristics and value sampling.
 
     Two-phase approach:
@@ -71,14 +97,9 @@ def detect_date_columns(
         if df[col_name].dtype != pl.String:
             continue
 
-        name_match = (
-            col_name in KNOWN_DATE_COLS
-            or bool(DATE_NAME_RE.search(col_name))
-        )
+        name_match = col_name in KNOWN_DATE_COLS or bool(DATE_NAME_RE.search(col_name))
 
-        non_null = df[col_name].drop_nulls().filter(
-            df[col_name].drop_nulls() != ""
-        )
+        non_null = df[col_name].drop_nulls().filter(df[col_name].drop_nulls() != "")
         if non_null.len() == 0:
             continue
 
@@ -109,13 +130,13 @@ def detect_date_columns(
 
     return detected
 
+
 # ---------------------------------------------------------------------------
 # Date conversion
 # ---------------------------------------------------------------------------
 
-def convert_date_column(
-    df: pl.DataFrame, col: str, fmt: str
-) -> tuple[pl.DataFrame, dict]:
+
+def convert_date_column(df: pl.DataFrame, col: str, fmt: str) -> tuple[pl.DataFrame, dict]:
     """Convert a single string column to date/datetime with 10 % threshold.
 
     If >10 % of non-null, non-empty values fail to parse the column is kept
@@ -133,13 +154,9 @@ def convert_date_column(
     original_nulls = series.null_count()
 
     if ":%H:%M:%S" in fmt:
-        converted = df.with_columns(
-            pl.col(col).str.to_datetime(fmt, strict=False)
-        )
+        converted = df.with_columns(pl.col(col).str.to_datetime(fmt, strict=False))
     else:
-        converted = df.with_columns(
-            pl.col(col).str.to_date(fmt, strict=False)
-        )
+        converted = df.with_columns(pl.col(col).str.to_date(fmt, strict=False))
 
     new_nulls = converted[col].null_count() - original_nulls
 
@@ -159,9 +176,11 @@ def convert_date_column(
         "new_nulls": new_nulls,
     }
 
+
 # ---------------------------------------------------------------------------
 # Date range validation
 # ---------------------------------------------------------------------------
+
 
 def validate_date_range(df: pl.DataFrame, col: str) -> dict:
     """Validate converted date/datetime column against [1900-01-01, 2026-12-31].
@@ -171,18 +190,12 @@ def validate_date_range(df: pl.DataFrame, col: str) -> dict:
     dtype = df[col].dtype
 
     if dtype == pl.Date:
-        out_of_range = df.filter(
-            pl.col(col).is_not_null()
-            & ((pl.col(col) < MIN_DATE) | (pl.col(col) > MAX_DATE))
-        ).height
+        out_of_range = df.filter(pl.col(col).is_not_null() & ((pl.col(col) < MIN_DATE) | (pl.col(col) > MAX_DATE))).height
         min_val = df[col].min()
         max_val = df[col].max()
     elif dtype in (pl.Datetime, pl.Datetime("us"), pl.Datetime("ns"), pl.Datetime("ms")):
         date_cast = pl.col(col).cast(pl.Date)
-        out_of_range = df.filter(
-            pl.col(col).is_not_null()
-            & ((date_cast < MIN_DATE) | (date_cast > MAX_DATE))
-        ).height
+        out_of_range = df.filter(pl.col(col).is_not_null() & ((date_cast < MIN_DATE) | (date_cast > MAX_DATE))).height
         min_val = df[col].min()
         max_val = df[col].max()
     else:
@@ -195,17 +208,19 @@ def validate_date_range(df: pl.DataFrame, col: str) -> dict:
         "out_of_range": out_of_range,
     }
 
+
 # ---------------------------------------------------------------------------
 # Single-table conversion
 # ---------------------------------------------------------------------------
+
 
 def convert_table(csv_path: Path, parquet_dir: Path) -> dict:
     """Orchestrate single-table conversion. Returns an inventory record dict."""
     t0 = time.time()
     csv_bytes = csv_path.stat().st_size
 
-    stem = csv_path.stem                       # e.g. DEMOGRAPHIC_Mailhot_V1
-    table_name = resolve_table_name(stem)      # e.g. DEMOGRAPHIC or LAB_RESULT_CM
+    stem = csv_path.stem  # e.g. DEMOGRAPHIC_Mailhot_V1
+    table_name = resolve_table_name(stem)  # e.g. DEMOGRAPHIC or LAB_RESULT_CM
     parquet_filename = stem + ".parquet"
 
     df = pl.read_csv(
@@ -269,9 +284,7 @@ def convert_table(csv_path: Path, parquet_dir: Path) -> dict:
     parquet_bytes = parquet_path.stat().st_size
 
     if csv_rows != parquet_rows:
-        print(
-            f"  [WARN] Row count mismatch: CSV={csv_rows:,}, Parquet={parquet_rows:,}"
-        )
+        print(f"  [WARN] Row count mismatch: CSV={csv_rows:,}, Parquet={parquet_rows:,}")
 
     elapsed = round(time.time() - t0, 2)
 
@@ -299,9 +312,11 @@ def convert_table(csv_path: Path, parquet_dir: Path) -> dict:
         "status": "ok" if csv_rows == parquet_rows else f"MISMATCH: CSV={csv_rows}, Parquet={parquet_rows}",
     }
 
+
 # ---------------------------------------------------------------------------
 # Inventory
 # ---------------------------------------------------------------------------
+
 
 def write_inventory(records: list[dict], output_path: Path) -> None:
     """Write file_inventory.csv with per-table conversion metadata."""

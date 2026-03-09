@@ -22,8 +22,15 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+import polars as pl
+
 from src.load.config import load_config
 from src.load.schema import parse_datastructure, resolve_table_name
+from src.validate.cohort import (
+    build_cohort_summary_df,
+    enrollment_crosscheck,
+    verify_hl_cohort,
+)
 from src.validate.structural import (
     ENCOUNTER_LINKED_TABLES,
     PATID_COL,
@@ -40,24 +47,13 @@ from src.validate.structural import (
     parse_cover_page,
     validate_table_schema,
 )
-from src.validate.cohort import (
-    ALL_HL_CODES,
-    verify_hl_cohort,
-    enrollment_crosscheck,
-    build_cohort_summary_df,
-)
-
-import polars as pl
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _build_table_map(
-    table_filenames: list[str], parquet_dir: Path
-) -> dict[str, Path]:
+def _build_table_map(table_filenames: list[str], parquet_dir: Path) -> dict[str, Path]:
     """Build mapping from table_name -> parquet_path."""
     table_map: dict[str, Path] = {}
     for filename in table_filenames:
@@ -89,8 +85,7 @@ def _section_schema(
     for r in cdm_results:
         exp = r["expected_col_count"] if r["expected_col_count"] is not None else "N/A"
         lines.append(
-            f"| {r['table']} | {exp} | {r['actual_col_count']} "
-            f"| {r['matched']} | {len(r['extra'])} | {len(r['missing'])} | {r['status']} |"
+            f"| {r['table']} | {exp} | {r['actual_col_count']} | {r['matched']} | {len(r['extra'])} | {len(r['missing'])} | {r['status']} |"
         )
 
     details = [r for r in cdm_results if r["extra"] or r["missing"]]
@@ -111,10 +106,7 @@ def _section_schema(
         for r in tr_results:
             exp = r["expected_col_count"] if r["expected_col_count"] is not None else "N/A"
             detail_str = "; ".join(r["details"]) if r["details"] else "—"
-            lines.append(
-                f"| {r['table']} | {exp} | {r['actual_col_count']} "
-                f"| {r['matched']} | {r['status']} | {detail_str} |"
-            )
+            lines.append(f"| {r['table']} | {exp} | {r['actual_col_count']} | {r['matched']} | {r['status']} | {detail_str} |")
         lines.append("")
 
     return "\n".join(lines)
@@ -140,10 +132,7 @@ def _section_integrity(
     lines.append("| Table | Unique IDs | Orphan IDs | Orphan % |")
     lines.append("|-------|-----------|------------|----------|")
     for r in patid_results:
-        lines.append(
-            f"| {r['table']} | {r['unique_ids']:,} "
-            f"| {flag_small_cell(r['orphan_ids'])} | {r['orphan_pct']:.2f}% |"
-        )
+        lines.append(f"| {r['table']} | {r['unique_ids']:,} | {flag_small_cell(r['orphan_ids'])} | {r['orphan_pct']:.2f}% |")
     lines.append("")
 
     lines.append("### ENCOUNTERID Referential Integrity\n")
@@ -151,9 +140,7 @@ def _section_integrity(
     lines.append("|-------|--------------------|--------------------|----------|-------|")
     for r in enc_results:
         if r.get("skipped"):
-            lines.append(
-                f"| {r['table']} | — | — | — | {r.get('reason', 'skipped')} |"
-            )
+            lines.append(f"| {r['table']} | — | — | — | {r.get('reason', 'skipped')} |")
         else:
             notes = ""
             if r.get("skip_partner"):
@@ -207,13 +194,11 @@ def _section_completeness(
         for partner in partners:
             row = f"| {partner} "
             for col in available_overview:
-                match = comp_df.filter(
-                    (pl.col(partner_col) == partner) & (pl.col("column") == col)
-                )
+                match = comp_df.filter((pl.col(partner_col) == partner) & (pl.col("column") == col))
                 if match.is_empty():
                     row += "| — "
                 else:
-                    tables_with_col = match["table"].unique().to_list()
+                    _ = match["table"].unique().to_list()  # tables_with_col
                     avg_pct = match["completeness"].mean()
                     if avg_pct is not None:
                         sym = completeness_heatmap_symbol(avg_pct)
@@ -238,9 +223,7 @@ def _section_completeness(
         for partner in partners:
             row = f"| {partner} "
             for col in available_ins:
-                match = comp_df.filter(
-                    (pl.col(partner_col) == partner) & (pl.col("column") == col)
-                )
+                match = comp_df.filter((pl.col(partner_col) == partner) & (pl.col("column") == col))
                 if match.is_empty():
                     row += "| — "
                 else:
@@ -281,9 +264,7 @@ def _section_completeness(
         for partner in tbl_partners:
             row = f"| {partner} "
             for col in display_cols:
-                match = tbl_data.filter(
-                    (pl.col(partner_col) == partner) & (pl.col("column") == col)
-                )
+                match = tbl_data.filter((pl.col(partner_col) == partner) & (pl.col("column") == col))
                 if match.is_empty():
                     row += "| — "
                 else:
@@ -315,10 +296,7 @@ def _section_missing(missing_df: pl.DataFrame) -> str:
         return "\n".join(lines)
 
     has_coded = missing_df.filter(
-        (pl.col("ni_count") > 0)
-        | (pl.col("un_count") > 0)
-        | (pl.col("ot_count") > 0)
-        | (pl.col("empty_count") > 0)
+        (pl.col("ni_count") > 0) | (pl.col("un_count") > 0) | (pl.col("ot_count") > 0) | (pl.col("empty_count") > 0)
     )
 
     if has_coded.is_empty():
@@ -432,10 +410,7 @@ def _section_cohort(
     lines.append(f"- HL records with null DX_DATE: {flag_small_cell(null_records)} ({null_pct}%)")
     lines.append(f"- Patients affected: {flag_small_cell(null_patients)}")
     if null_pct > 5:
-        lines.append(
-            "\nNull DX_DATEs reduce Method A count. Method B may be more "
-            "reliable for these patients."
-        )
+        lines.append("\nNull DX_DATEs reduce Method A count. Method B may be more reliable for these patients.")
     lines.append("")
 
     # --- DX_TYPE Mismatches ---
@@ -449,8 +424,7 @@ def _section_cohort(
         lines.append("|-----|---------|---------------|-------|----------|")
 
         summary = (
-            dx_mismatches
-            .group_by("DX", "DX_TYPE", "expected_type")
+            dx_mismatches.group_by("DX", "DX_TYPE", "expected_type")
             .agg(
                 pl.len().alias("count"),
                 pl.col("SOURCE").unique().alias("partners"),
@@ -460,10 +434,7 @@ def _section_cohort(
         )
         for row in summary.iter_rows(named=True):
             partners_str = ", ".join(str(p) for p in row["partners"]) if row["partners"] else "—"
-            lines.append(
-                f"| {row['DX']} | {row['DX_TYPE']} | {row['expected_type']} "
-                f"| {flag_small_cell(row['count'])} | {partners_str} |"
-            )
+            lines.append(f"| {row['DX']} | {row['DX_TYPE']} | {row['expected_type']} | {flag_small_cell(row['count'])} | {partners_str} |")
         lines.append("")
 
     lines.append("> Per locked decision: DX_TYPE mismatches reported but not used for exclusion.\n")
@@ -473,12 +444,7 @@ def _section_cohort(
     lines.append("### ICD Version Distribution\n")
 
     if not icd_flags_df.is_empty():
-        flag_counts = (
-            icd_flags_df
-            .group_by("icd_flag")
-            .agg(pl.len().alias("n"))
-            .sort("icd_flag")
-        )
+        flag_counts = icd_flags_df.group_by("icd_flag").agg(pl.len().alias("n")).sort("icd_flag")
         total_flagged = flag_counts["n"].sum()
         lines.append("| Flag | Patients | % of Cohort |")
         lines.append("|------|----------|-------------|")
@@ -517,7 +483,7 @@ def _section_cohort(
         lines.append("### Enrollment Cross-Check\n")
         with_enr = enrollment_result["with_enrollment"]
         without_enr = enrollment_result["without_enrollment"]
-        total_hl = enrollment_result["total_hl"]
+        _ = enrollment_result["total_hl"]  # total_hl for future use
         cov_pct = enrollment_result["coverage_pct"]
         uncov_pct = round(100 - cov_pct, 2)
 
@@ -541,10 +507,7 @@ def _section_cohort(
                 s = enrollment_result["coverage_summary_by_partner"][partner]
                 med = s.get("median_duration_days")
                 med_str = f"{med:.0f}" if med is not None else "N/A"
-                lines.append(
-                    f"| {partner} | {s.get('earliest_start', 'N/A')} "
-                    f"| {s.get('latest_end', 'N/A')} | {med_str} |"
-                )
+                lines.append(f"| {partner} | {s.get('earliest_start', 'N/A')} | {s.get('latest_end', 'N/A')} | {med_str} |")
             lines.append("")
 
     return "\n".join(lines)
@@ -604,7 +567,9 @@ def main(config_path: Path | None = None) -> None:
         exp_count = TUMOR_REGISTRY_EXPECTED_COUNTS.get(table_name)
 
         result = validate_table_schema(
-            pq_path, expected, table_name,
+            pq_path,
+            expected,
+            table_name,
             is_tumor_registry=is_tr,
             expected_col_count=exp_count,
         )
@@ -628,9 +593,11 @@ def main(config_path: Path | None = None) -> None:
     patid_unique = {"total_rows": 0, "unique_ids": 0, "duplicate_ids": 0, "is_unique": False}
     if demo_path and demo_path.exists():
         patid_unique = check_patid_uniqueness(demo_path)
-        print(f"  DEMOGRAPHIC: {patid_unique['total_rows']:,} rows, "
-              f"{patid_unique['unique_ids']:,} unique IDs, "
-              f"{patid_unique['duplicate_ids']} duplicates")
+        print(
+            f"  DEMOGRAPHIC: {patid_unique['total_rows']:,} rows, "
+            f"{patid_unique['unique_ids']:,} unique IDs, "
+            f"{patid_unique['duplicate_ids']} duplicates"
+        )
     else:
         print("  [SKIP] DEMOGRAPHIC not found")
 
@@ -643,8 +610,7 @@ def main(config_path: Path | None = None) -> None:
                 continue
             result = check_patid_integrity(child_path, demo_path, table_name)
             patid_results.append(result)
-            print(f"  {table_name}: {result['unique_ids']:,} unique IDs, "
-                  f"{result['orphan_ids']} orphans ({result['orphan_pct']:.2f}%)")
+            print(f"  {table_name}: {result['unique_ids']:,} unique IDs, {result['orphan_ids']} orphans ({result['orphan_pct']:.2f}%)")
 
     enc_results: list[dict] = []
     if enc_path and enc_path.exists():
@@ -655,17 +621,17 @@ def main(config_path: Path | None = None) -> None:
                 continue
 
             skip = "CHP" if table_name == "LAB_RESULT_CM" else None
-            result = check_encounterid_integrity(
-                child_path, enc_path, table_name, skip_partner=skip
-            )
+            result = check_encounterid_integrity(child_path, enc_path, table_name, skip_partner=skip)
             enc_results.append(result)
 
             if result.get("skipped"):
                 print(f"  {table_name}: skipped ({result.get('reason')})")
             else:
                 note = f" [{result['skip_partner']} excluded]" if result.get("skip_partner") else ""
-                print(f"  {table_name}: {result['unique_encounterids']:,} unique ENCOUNTERIDs, "
-                      f"{result['orphan_encounterids']} orphans ({result['orphan_pct']:.2f}%){note}")
+                print(
+                    f"  {table_name}: {result['unique_encounterids']:,} unique ENCOUNTERIDs, "
+                    f"{result['orphan_encounterids']} orphans ({result['orphan_pct']:.2f}%){note}"
+                )
     else:
         print("  [SKIP] ENCOUNTER not found — ENCOUNTERID checks skipped")
 
@@ -698,11 +664,7 @@ def main(config_path: Path | None = None) -> None:
         frame = classify_missing_values(pq_path, table_name)
         if not frame.is_empty():
             missing_frames.append(frame)
-            coded = frame.filter(
-                (pl.col("ni_count") > 0)
-                | (pl.col("un_count") > 0)
-                | (pl.col("ot_count") > 0)
-            )
+            coded = frame.filter((pl.col("ni_count") > 0) | (pl.col("un_count") > 0) | (pl.col("ot_count") > 0))
             print(f"  {table_name}: {frame.height} string cols, {coded.height} with coded values")
 
     missing_df = pl.concat(missing_frames) if missing_frames else pl.DataFrame()
@@ -739,12 +701,7 @@ def main(config_path: Path | None = None) -> None:
 
         icd_flags = cohort_result["icd_flags"]
         if not icd_flags.is_empty():
-            flag_counts = (
-                icd_flags
-                .group_by("icd_flag")
-                .agg(pl.len().alias("n"))
-                .sort("icd_flag")
-            )
+            flag_counts = icd_flags.group_by("icd_flag").agg(pl.len().alias("n")).sort("icd_flag")
             for row in flag_counts.iter_rows(named=True):
                 print(f"  {row['icd_flag']}: {row['n']:,}")
 
@@ -752,10 +709,8 @@ def main(config_path: Path | None = None) -> None:
         print(f"  DX_TYPE mismatches:  {dx_mm.height}")
 
         if enr_path and enr_path.exists() and demo_path and demo_path.exists():
-            print(f"\n  Enrollment cross-check...")
-            enrollment_result = enrollment_crosscheck(
-                cohort_result["union_ids_df"], enr_path, demo_path
-            )
+            print("\n  Enrollment cross-check...")
+            enrollment_result = enrollment_crosscheck(cohort_result["union_ids_df"], enr_path, demo_path)
             print(f"  With enrollment:     {enrollment_result['with_enrollment']:,} ({enrollment_result['coverage_pct']}%)")
             print(f"  Without enrollment:  {enrollment_result['without_enrollment']:,}")
         else:
@@ -776,7 +731,7 @@ def main(config_path: Path | None = None) -> None:
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     report_parts: list[str] = []
-    report_parts.append(f"# Structural Validation Report\n")
+    report_parts.append("# Structural Validation Report\n")
     report_parts.append(f"**Generated:** {timestamp}")
     report_parts.append(f"**Data source:** {paths.data_root}")
     report_parts.append(f"**Parquet directory:** {paths.parquet_dir}")
@@ -806,9 +761,7 @@ def main(config_path: Path | None = None) -> None:
     # ----- Console summary -----
     schema_warn_count = sum(1 for r in schema_results if r["status"] == "warn")
     total_orphan_patids = sum(r["orphan_ids"] for r in patid_results)
-    total_orphan_encs = sum(
-        r["orphan_encounterids"] for r in enc_results if not r.get("skipped")
-    )
+    total_orphan_encs = sum(r["orphan_encounterids"] for r in enc_results if not r.get("skipped"))
 
     hl_union = cohort_result["union"] if cohort_result else 0
     enr_cov = f"{enrollment_result['coverage_pct']}%" if enrollment_result else "N/A"
@@ -823,7 +776,7 @@ def main(config_path: Path | None = None) -> None:
     print(f"  HL cohort (union):    {hl_union:,} patients (expected ~9,331)")
     print(f"  Enrollment coverage:  {enr_cov}")
     print(f"  Elapsed:              {overall_elapsed:.1f}s")
-    print(f"  Reports:")
+    print("  Reports:")
     print(f"    - {report_path}")
     print(f"    - {reports_dir / 'completeness_by_partner.csv'}")
     if cohort_result:
@@ -840,9 +793,10 @@ if __name__ == "__main__":
         raise
     except Exception as exc:
         print(f"\n{'=' * 60}")
-        print(f"  STRUCTURAL VALIDATION FAILED")
+        print("  STRUCTURAL VALIDATION FAILED")
         print(f"{'=' * 60}")
         print(f"  Error: {exc}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)

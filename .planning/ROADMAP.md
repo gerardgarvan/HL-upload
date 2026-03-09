@@ -530,6 +530,20 @@ Addresses technical debt and quality gaps from [.planning/codebase/CONCERNS.md](
 **Plans:** 1 plan
 - [ ] 10-01-PLAN.md — Pre-commit, Makefile, CI, CONCERNS/STATE/ROADMAP updates
 
+### Phase 11: Remove XLSX Dependencies (Use CSV)
+
+**Goal:** Replace Outcomes.xlsx with Outcomes.csv; remove openpyxl dependency.
+
+**Success Criteria:**
+- [x] load_outcomes_code_lookup reads Outcomes.csv via pd.read_csv
+- [x] All path references use Outcomes.csv
+- [x] Tests pass with CSV mocks; openpyxl removed from environment and CI
+
+**Dependencies:** Phase 10
+
+**Plans:** 1 plan
+- [x] 11-01-PLAN.md — Switch loader to CSV; update tests; remove openpyxl; update docs
+
 ---
 
 ## Risk Register

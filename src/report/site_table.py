@@ -11,28 +11,45 @@ from pathlib import Path
 
 import polars as pl
 
+from src.validate.cohort import ALL_HL_CODES, ALL_HL_NORMALIZED, detect_dx_format
 from src.validate.structural import (
     PATID_COL,
     SMALL_CELL_THRESHOLD,
     TUMOR_REGISTRY_TABLES,
     flag_small_cell,
 )
-from src.validate.cohort import detect_dx_format, ALL_HL_CODES, ALL_HL_NORMALIZED
-from src.validate.values import MASKED_BIRTH_DATE, HL_HISTOLOGY_CODES
-
+from src.validate.values import HL_HISTOLOGY_CODES, MASKED_BIRTH_DATE
 
 # TMA and TMC → TM
 SOURCE_COLLAPSE = {"TMA": "TM", "TMC": "TM"}
 
 # Stage value → Stage_number (collapsed 1–4, Unknown)
 STAGE_NUMBER_MAP: dict[str, str] = {
-    "1": "1", "1A": "1", "1B": "1",
-    "2": "2", "2A": "2", "2B": "2", "2 bulky": "2",
-    "3": "3", "3A": "3", "3B": "3",
-    "4": "4", "4A": "4", "4B": "4",
-    "0": "Unknown", "0A": "Unknown", "1E": "Unknown", "2E": "Unknown",
-    "3C": "Unknown", "4C": "Unknown", "88": "Unknown", "99": "Unknown",
-    "5": "Unknown", "7": "Unknown", "8": "Unknown", "9": "Unknown",  # NAACCR in situ/NA/unknown
+    "1": "1",
+    "1A": "1",
+    "1B": "1",
+    "2": "2",
+    "2A": "2",
+    "2B": "2",
+    "2 bulky": "2",
+    "3": "3",
+    "3A": "3",
+    "3B": "3",
+    "4": "4",
+    "4A": "4",
+    "4B": "4",
+    "0": "Unknown",
+    "0A": "Unknown",
+    "1E": "Unknown",
+    "2E": "Unknown",
+    "3C": "Unknown",
+    "4C": "Unknown",
+    "88": "Unknown",
+    "99": "Unknown",
+    "5": "Unknown",
+    "7": "Unknown",
+    "8": "Unknown",
+    "9": "Unknown",  # NAACCR in situ/NA/unknown
 }
 
 
@@ -68,9 +85,7 @@ def _count_records_by_id_source(
         )
         if df.is_empty():
             continue
-        df = df.with_columns(
-            pl.col("_src").map_elements(_collapse_source, return_dtype=pl.String)
-        )
+        df = df.with_columns(pl.col("_src").map_elements(_collapse_source, return_dtype=pl.String))
         frames.append(df)
     if not frames:
         return pl.DataFrame(schema={PATID_COL: pl.String, "_src": pl.String, "_n": pl.UInt32})
@@ -83,19 +98,20 @@ def _predominant_site_per_patient(
 ) -> pl.DataFrame:
     """Assign each patient to their predominant SOURCE. TMA+TMC→TM."""
     tables_with_source = [
-        "DEMOGRAPHIC", "ENCOUNTER", "DIAGNOSIS", "PROCEDURES", "CONDITION",
-        "VITAL", "LAB_RESULT_CM", "PRESCRIBING", "ENROLLMENT",
+        "DEMOGRAPHIC",
+        "ENCOUNTER",
+        "DIAGNOSIS",
+        "PROCEDURES",
+        "CONDITION",
+        "VITAL",
+        "LAB_RESULT_CM",
+        "PRESCRIBING",
+        "ENROLLMENT",
     ] + list(TUMOR_REGISTRY_TABLES)
     counts = _count_records_by_id_source(table_map, tables_with_source)
     if counts.is_empty():
         return pl.DataFrame(schema={PATID_COL: pl.String, "SITE": pl.String})
-    ranked = (
-        counts
-        .sort("_n", descending=True)
-        .group_by(PATID_COL)
-        .first()
-        .select(PATID_COL, pl.col("_src").alias("SITE"))
-    )
+    ranked = counts.sort("_n", descending=True).group_by(PATID_COL).first().select(PATID_COL, pl.col("_src").alias("SITE"))
     return ranked
 
 
@@ -106,10 +122,7 @@ def _first_hl_dx(table_map: dict[str, Path]) -> pl.DataFrame | None:
         return None
     dx_format = detect_dx_format(diag_path)
     code_set = ALL_HL_CODES if dx_format == "dotted" else ALL_HL_NORMALIZED
-    dx_match = (
-        pl.col("DX") if dx_format == "dotted"
-        else pl.col("DX").str.to_uppercase().str.replace_all(r"\.", "")
-    )
+    dx_match = pl.col("DX") if dx_format == "dotted" else pl.col("DX").str.to_uppercase().str.replace_all(r"\.", "")
     first = (
         pl.scan_parquet(diag_path)
         .with_columns(pl.col(PATID_COL).cast(pl.String))
@@ -137,10 +150,7 @@ def _first_hl_from_condition(table_map: dict[str, Path]) -> pl.DataFrame | None:
         return None
     cond_format = detect_dx_format(cond_path, code_col="CONDITION")
     code_set = ALL_HL_CODES if cond_format == "dotted" else ALL_HL_NORMALIZED
-    cond_match = (
-        pl.col("CONDITION") if cond_format == "dotted"
-        else pl.col("CONDITION").str.to_uppercase().str.replace_all(r"\.", "")
-    )
+    cond_match = pl.col("CONDITION") if cond_format == "dotted" else pl.col("CONDITION").str.to_uppercase().str.replace_all(r"\.", "")
     # Use ONSET_DATE, fallback to REPORT_DATE when null
     if "ONSET_DATE" in schema and "REPORT_DATE" in schema:
         cond_date = pl.coalesce(pl.col("ONSET_DATE"), pl.col("REPORT_DATE"))
@@ -174,9 +184,7 @@ def _first_hl_dx_combined(table_map: dict[str, Path]) -> pl.DataFrame | None:
     if first_cond is None:
         return first_dx
     combined = first_dx.join(first_cond, on=PATID_COL, how="full")
-    combined = combined.with_columns(
-        pl.min_horizontal("FIRST_HL_DX_DATE", "FIRST_HL_COND_DATE").alias("FIRST_HL_DX_DATE")
-    )
+    combined = combined.with_columns(pl.min_horizontal("FIRST_HL_DX_DATE", "FIRST_HL_COND_DATE").alias("FIRST_HL_DX_DATE"))
     return combined.select(PATID_COL, "FIRST_HL_DX_DATE")
 
 
@@ -216,13 +224,14 @@ def _age_at_dx(
         if age_col.dtype in (pl.String, pl.Utf8):
             tr_df = tr_df.with_columns(pl.col("AGE_AT_DIAGNOSIS").cast(pl.Float64, strict=False))
         tr_df = tr_df.with_columns(
-            pl.when(
-                (pl.col("AGE_AT_DIAGNOSIS") >= 0) & (pl.col("AGE_AT_DIAGNOSIS") <= 120)
-            )
+            pl.when((pl.col("AGE_AT_DIAGNOSIS") >= 0) & (pl.col("AGE_AT_DIAGNOSIS") <= 120))
             .then(
-                pl.when(pl.col("AGE_AT_DIAGNOSIS") < 21).then(pl.lit("<21"))
-                .when(pl.col("AGE_AT_DIAGNOSIS") < 40).then(pl.lit("21-39"))
-                .when(pl.col("AGE_AT_DIAGNOSIS") < 65).then(pl.lit("40-64"))
+                pl.when(pl.col("AGE_AT_DIAGNOSIS") < 21)
+                .then(pl.lit("<21"))
+                .when(pl.col("AGE_AT_DIAGNOSIS") < 40)
+                .then(pl.lit("21-39"))
+                .when(pl.col("AGE_AT_DIAGNOSIS") < 65)
+                .then(pl.lit("40-64"))
                 .otherwise(pl.lit("65+"))
             )
             .when(pl.col("AGE_AT_DIAGNOSIS") == 200)  # masked
@@ -249,13 +258,8 @@ def _age_at_dx(
     )
     base = first_dx.join(demo, on=PATID_COL, how="left")
     base = base.with_columns(
-        pl.when(
-            pl.col("BIRTH_DATE").is_not_null()
-            & (pl.col("BIRTH_DATE") != pl.lit(MASKED_BIRTH_DATE))
-        )
-        .then(
-            (pl.col("FIRST_HL_DX_DATE") - pl.col("BIRTH_DATE")).dt.total_days() / 365.25
-        )
+        pl.when(pl.col("BIRTH_DATE").is_not_null() & (pl.col("BIRTH_DATE") != pl.lit(MASKED_BIRTH_DATE)))
+        .then((pl.col("FIRST_HL_DX_DATE") - pl.col("BIRTH_DATE")).dt.total_days() / 365.25)
         .otherwise(None)
         .alias("_age_years")
     )
@@ -301,7 +305,8 @@ def _first_chemo_date(table_map: dict[str, Path], hl_ids: pl.Expr, ids: pl.Serie
         for col in available:
             if tr[col].dtype in (pl.String, pl.Utf8):
                 tr = tr.with_columns(
-                    pl.col(col).str.to_date("%Y.%m.%d", strict=False)
+                    pl.col(col)
+                    .str.to_date("%Y.%m.%d", strict=False)
                     .fill_null(pl.col(col).str.to_date("%m/%d/%Y", strict=False))
                     .fill_null(pl.col(col).str.to_date("%d%b%Y", strict=False))
                     .fill_null(pl.col(col).str.to_date("%Y%m%d", strict=False))
@@ -359,10 +364,7 @@ def _age_at_first_chemo(
     )
     base = base.join(demo, on=PATID_COL, how="left")
     base = base.with_columns(
-        pl.when(
-            pl.col("BIRTH_DATE").is_not_null()
-            & (pl.col("BIRTH_DATE") != pl.lit(MASKED_BIRTH_DATE))
-        )
+        pl.when(pl.col("BIRTH_DATE").is_not_null() & (pl.col("BIRTH_DATE") != pl.lit(MASKED_BIRTH_DATE)))
         .then((pl.col("FIRST_CHEMO_DATE") - pl.col("BIRTH_DATE")).dt.total_days() / 365.25)
         .otherwise(None)
         .alias("_age_years")
@@ -427,9 +429,7 @@ def _enrollment_status(table_map: dict[str, Path], ids: pl.Series) -> pl.DataFra
         .collect()
     )
     all_ids = pl.DataFrame({PATID_COL: ids})
-    return all_ids.join(in_enr, on=PATID_COL, how="left").with_columns(
-        pl.col("ENROLLMENT_STATUS").fill_null("Not in ENROLLMENT")
-    )
+    return all_ids.join(in_enr, on=PATID_COL, how="left").with_columns(pl.col("ENROLLMENT_STATUS").fill_null("Not in ENROLLMENT"))
 
 
 def build_site_table(table_map: dict[str, Path]) -> pl.DataFrame:
@@ -478,11 +478,18 @@ def build_site_table(table_map: dict[str, Path]) -> pl.DataFrame:
 
     # Stage from TUMOR_REGISTRY — try HL histology first, fallback to any tumor
     STAGE_COLS = [
-        "STAGE_GROUP", "COMBINED_STAGE_GROUP", "CLIN_STAGE",
-        "AJCC_TNM_CLIN_STAGE_GROUP", "AJCC_TNM_PATH_STAGE_GROUP",
-        "CS_STAGE_GRP_DISPLAY", "PATH_AJCC_STAGE_GROUP", "CLINICAL_AJCC_STAGE_GROUP",
-        "DERIVED_AJCC6_STAGE_GRP", "DERIVED_AJCC7_STAGE_GRP",
-        "COMBINED_STAGE", "AJCC_STAGE",
+        "STAGE_GROUP",
+        "COMBINED_STAGE_GROUP",
+        "CLIN_STAGE",
+        "AJCC_TNM_CLIN_STAGE_GROUP",
+        "AJCC_TNM_PATH_STAGE_GROUP",
+        "CS_STAGE_GRP_DISPLAY",
+        "PATH_AJCC_STAGE_GROUP",
+        "CLINICAL_AJCC_STAGE_GROUP",
+        "DERIVED_AJCC6_STAGE_GRP",
+        "DERIVED_AJCC7_STAGE_GRP",
+        "COMBINED_STAGE",
+        "AJCC_STAGE",
     ]
     tr_stage: list[pl.DataFrame] = []
 
@@ -498,9 +505,9 @@ def build_site_table(table_map: dict[str, Path]) -> pl.DataFrame:
             )
         )
         if hl_only and "HISTOLOGY" in schema:
-            lf = lf.with_columns(
-                pl.col("HISTOLOGY").cast(pl.Float64, strict=False).cast(pl.Int64, strict=False).alias("_hist")
-            ).filter(pl.col("_hist").is_in(list(HL_HISTOLOGY_CODES)))
+            lf = lf.with_columns(pl.col("HISTOLOGY").cast(pl.Float64, strict=False).cast(pl.Int64, strict=False).alias("_hist")).filter(
+                pl.col("_hist").is_in(list(HL_HISTOLOGY_CODES))
+            )
         cols = [PATID_COL, pl.col(stage_col).alias("STAGE_GROUP")]
         if "DATE_OF_DIAGNOSIS" in schema:
             cols.append(pl.col("DATE_OF_DIAGNOSIS"))
@@ -530,14 +537,15 @@ def build_site_table(table_map: dict[str, Path]) -> pl.DataFrame:
         st = pl.concat(tr_stage).unique(subset=[PATID_COL], keep="first")
         # Cast to string; remap to Stage_number (1, 2, 3, 4, Unknown)
         st = st.with_columns(
-            pl.col("STAGE_GROUP").cast(pl.Int64, strict=False).cast(pl.String).fill_null(
-                pl.col("STAGE_GROUP").cast(pl.String)
-            ).str.strip_chars().alias("_sg")
+            pl.col("STAGE_GROUP")
+            .cast(pl.Int64, strict=False)
+            .cast(pl.String)
+            .fill_null(pl.col("STAGE_GROUP").cast(pl.String))
+            .str.strip_chars()
+            .alias("_sg")
         )
         keys, vals = list(STAGE_NUMBER_MAP.keys()), list(STAGE_NUMBER_MAP.values())
-        st = st.with_columns(
-            pl.col("_sg").replace(keys, vals).fill_null(pl.lit("Unknown")).alias("STAGE_NUMBER")
-        )
+        st = st.with_columns(pl.col("_sg").replace(keys, vals).fill_null(pl.lit("Unknown")).alias("STAGE_NUMBER"))
         # Unmapped values default to Unknown
         st = st.with_columns(
             pl.when(pl.col("STAGE_NUMBER").is_in(["1", "2", "3", "4", "Unknown"]))
@@ -620,7 +628,10 @@ ETHNICITY_LABELS: dict[str, str] = {
     "Unknown": "Unknown",
 }
 STAGE_NUMBER_LABELS: dict[str, str] = {
-    "1": "Stage 1", "2": "Stage 2", "3": "Stage 3", "4": "Stage 4",
+    "1": "Stage 1",
+    "2": "Stage 2",
+    "3": "Stage 3",
+    "4": "Stage 4",
     "Unknown": "Unknown",
 }
 
@@ -694,8 +705,14 @@ def build_site_summary_html(summary_df: pl.DataFrame) -> str:
         if var == "Insurance":
             # Collapse insurance: aggregate by collapsed category
             INSURANCE_ORDER = [
-                "Medicare", "Medicaid", "Private", "Other government",
-                "No payment / Self-pay", "Other", "Unavailable", "Unknown",
+                "Medicare",
+                "Medicaid",
+                "Private",
+                "Other government",
+                "No payment / Self-pay",
+                "Other",
+                "Unavailable",
+                "Unknown",
             ]
             collapsed: dict[str, dict[str, int]] = {}
             for row in subset.iter_rows(named=True):

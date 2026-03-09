@@ -1,8 +1,8 @@
-# Modality Flags from Outcomes.xlsx
+# Modality Flags from Outcomes.csv
 
 ## Source
 
-Outcomes sheet, columns: Modality, Code system, Code, Description.
+Outcomes.csv, columns: Modality, Code system, Code, Description.
 
 Modality and Code system are forward-filled (NaN = same as previous row).
 

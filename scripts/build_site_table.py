@@ -17,12 +17,14 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.load.config import load_config
 from src.load.schema import parse_datastructure, resolve_table_name
-from src.report.site_table import build_site_table, build_site_summary_table, build_site_summary_html
+from src.report.site_table import (
+    build_site_summary_html,
+    build_site_summary_table,
+    build_site_table,
+)
 
 
-def _build_table_map(
-    table_filenames: list[str], parquet_dir: Path
-) -> dict[str, Path]:
+def _build_table_map(table_filenames: list[str], parquet_dir: Path) -> dict[str, Path]:
     """Build mapping from table_name -> parquet_path."""
     table_map: dict[str, Path] = {}
     for filename in table_filenames:

@@ -15,45 +15,40 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+import polars as pl
+
+from src.clean.dedup import (
+    CLEAN_FLAG_COLS,
+    CLEAN_FLAG_PREFIX,
+    DEDUP_KEYS,
+    EVENT_DATE_COLS,
+    check_death_consistency,
+    check_demographic_consistency,
+    drop_existing_clean_flags,
+    flag_duplicates,
+    flag_events_outside_encounters,
+    write_cleaned,
+)
+from src.clean.harmonize import (
+    PARTNER_FLAGS,
+    add_partner_flags,
+    flag_encounters_outside_enrollment,
+    flag_no_enrollment,
+)
 from src.load.config import load_config
 from src.load.schema import parse_datastructure, resolve_table_name
 from src.validate.structural import (
     PATID_COL,
     SMALL_CELL_THRESHOLD,
-    TUMOR_REGISTRY_TABLES,
-    ENCOUNTER_LINKED_TABLES,
     flag_small_cell,
 )
-from src.clean.dedup import (
-    flag_duplicates,
-    DEDUP_KEYS,
-    EVENT_DATE_COLS,
-    CLEAN_FLAG_COLS,
-    CLEAN_FLAG_PREFIX,
-    check_demographic_consistency,
-    flag_events_outside_encounters,
-    check_death_consistency,
-    drop_existing_clean_flags,
-    write_cleaned,
-)
-from src.clean.harmonize import (
-    add_partner_flags,
-    PARTNER_FLAGS,
-    flag_encounters_outside_enrollment,
-    flag_no_enrollment,
-)
-
-import polars as pl
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _build_table_map(
-    table_filenames: list[str], parquet_dir: Path
-) -> dict[str, Path]:
+def _build_table_map(table_filenames: list[str], parquet_dir: Path) -> dict[str, Path]:
     """Build mapping from table_name -> parquet_path."""
     table_map: dict[str, Path] = {}
     for filename in table_filenames:
@@ -111,10 +106,7 @@ def _generate_dedup_report(
         if table_name in DEDUP_KEYS:
             keys_str = ", ".join(DEDUP_KEYS[table_name])
             rate = dup_count / max(total, 1) * 100
-            lines.append(
-                f"| {table_name} | {total:,} | {flag_small_cell(dup_count)} "
-                f"| {rate:.2f}% | {keys_str} |"
-            )
+            lines.append(f"| {table_name} | {total:,} | {flag_small_cell(dup_count)} | {rate:.2f}% | {keys_str} |")
         else:
             lines.append(f"| {table_name} | {total:,} | — | — | — |")
 
@@ -138,10 +130,7 @@ def _generate_dedup_report(
             total = row["total"]
             dup_c = int(row["dup_count"]) if row["dup_count"] is not None else 0
             rate = dup_c / max(total, 1) * 100
-            lines.append(
-                f"| {partner} | {table_name} | {total:,} "
-                f"| {flag_small_cell(dup_c)} | {rate:.2f}% |"
-            )
+            lines.append(f"| {partner} | {table_name} | {total:,} | {flag_small_cell(dup_c)} | {rate:.2f}% |")
 
     if not partner_rows_found:
         lines.append("| — | — | — | — | No partner dedup data available |")
@@ -154,14 +143,8 @@ def _generate_dedup_report(
         lines.append(f"- **{table_name}:** {', '.join(keys)}")
     lines.append("")
     lines.append("### Flagging Behavior\n")
-    lines.append(
-        "- **ALL** occurrences sharing the same composite key are flagged "
-        "(`IS_DUPLICATE = 1`), not just subsequent rows."
-    )
-    lines.append(
-        "- Null key values do **not** match each other (`null != null`), "
-        "so rows with null keys are not flagged as duplicates."
-    )
+    lines.append("- **ALL** occurrences sharing the same composite key are flagged (`IS_DUPLICATE = 1`), not just subsequent rows.")
+    lines.append("- Null key values do **not** match each other (`null != null`), so rows with null keys are not flagged as duplicates.")
     lines.append("- No records are deleted; flags are additive Int8 columns.")
     lines.append("")
 
@@ -190,15 +173,9 @@ def _generate_consistency_report(
 
     lines.append("## Table of Contents\n")
     lines.append("1. [Demographics Consistency](#1-demographics-consistency)")
-    lines.append(
-        "2. [Events Outside Encounter Windows]"
-        "(#2-events-outside-encounter-windows)"
-    )
+    lines.append("2. [Events Outside Encounter Windows](#2-events-outside-encounter-windows)")
     lines.append("3. [Death Date Consistency](#3-death-date-consistency)")
-    lines.append(
-        "4. [Insurance Enrollment Coverage]"
-        "(#4-insurance-enrollment-coverage)"
-    )
+    lines.append("4. [Insurance Enrollment Coverage](#4-insurance-enrollment-coverage)")
     lines.append("\n---\n")
 
     # ── Section 1: Demographics Consistency ──────────────────────────────
@@ -217,10 +194,7 @@ def _generate_consistency_report(
         if n_bd == 0:
             lines.append("- **Multiple BIRTH_DATE values:** 0 inconsistencies")
         else:
-            lines.append(
-                f"- **Multiple BIRTH_DATE values:** "
-                f"{flag_small_cell(n_bd)} patients"
-            )
+            lines.append(f"- **Multiple BIRTH_DATE values:** {flag_small_cell(n_bd)} patients")
             if n_bd <= SMALL_CELL_THRESHOLD:
                 lines.append(f"  - Patient IDs: {', '.join(str(x) for x in multi_bd)}")
 
@@ -228,10 +202,7 @@ def _generate_consistency_report(
         if n_sx == 0:
             lines.append("- **Multiple SEX values:** 0 inconsistencies")
         else:
-            lines.append(
-                f"- **Multiple SEX values:** "
-                f"{flag_small_cell(n_sx)} patients"
-            )
+            lines.append(f"- **Multiple SEX values:** {flag_small_cell(n_sx)} patients")
             if n_sx <= SMALL_CELL_THRESHOLD:
                 lines.append(f"  - Patient IDs: {', '.join(str(x) for x in multi_sx)}")
 
@@ -249,20 +220,14 @@ def _generate_consistency_report(
         if flag_count > 0 or "_con_outside_encounter" in stats["flags"]:
             total = stats["total_rows"]
             rate = flag_count / max(total, 1) * 100
-            lines.append(
-                f"| {table_name} | {total:,} "
-                f"| {flag_small_cell(flag_count)} | {rate:.2f}% |"
-            )
+            lines.append(f"| {table_name} | {total:,} | {flag_small_cell(flag_count)} | {rate:.2f}% |")
             any_event_flag = True
 
     if not any_event_flag:
         lines.append("| — | — | — | No event-encounter flags generated |")
 
     lines.append("")
-    lines.append(
-        "> **Note:** ±1 day tolerance applied. Rows with null "
-        "ENCOUNTERID are not assessed (flag = 0).\n"
-    )
+    lines.append("> **Note:** ±1 day tolerance applied. Rows with null ENCOUNTERID are not assessed (flag = 0).\n")
 
     # ── Section 3: Death Date Consistency ────────────────────────────────
     lines.append("## 3. Death Date Consistency\n")
@@ -273,10 +238,7 @@ def _generate_consistency_report(
         checked = death_consistency.get("patients_checked", 0)
         mismatched = death_consistency.get("patients_mismatched", 0)
         lines.append(f"- **Patients checked:** {checked:,}")
-        lines.append(
-            f"- **Patients with mismatched death dates:** "
-            f"{flag_small_cell(mismatched)}"
-        )
+        lines.append(f"- **Patients with mismatched death dates:** {flag_small_cell(mismatched)}")
 
         details = death_consistency.get("details", [])
         if details:
@@ -285,9 +247,7 @@ def _generate_consistency_report(
             lines.append("|----------|------------|---------|------------|")
             for d in details:
                 lines.append(
-                    f"| {d['tr_table']} | {d['tr_date_col']} "
-                    f"| {d['patients_checked']:,} "
-                    f"| {flag_small_cell(d['patients_mismatched'])} |"
+                    f"| {d['tr_table']} | {d['tr_date_col']} | {d['patients_checked']:,} | {flag_small_cell(d['patients_mismatched'])} |"
                 )
 
     lines.append("")
@@ -305,17 +265,11 @@ def _generate_consistency_report(
         lines.append("ENCOUNTER table not processed or no enrollment data.\n")
     else:
         enc_total = enc_stats.get("total_rows", 0)
-        lines.append(
-            f"- **ENCOUNTER rows outside any enrollment period:** "
-            f"{flag_small_cell(outside_enr)}"
-        )
+        lines.append(f"- **ENCOUNTER rows outside any enrollment period:** {flag_small_cell(outside_enr)}")
         if enc_total > 0:
             rate_out = outside_enr / enc_total * 100
             lines.append(f"  - Rate: {rate_out:.2f}% of {enc_total:,} encounters")
-        lines.append(
-            f"- **Patients with no enrollment record:** "
-            f"{flag_small_cell(no_enr)}"
-        )
+        lines.append(f"- **Patients with no enrollment record:** {flag_small_cell(no_enr)}")
     lines.append("")
 
     out_path = reports_dir / "consistency_report.md"
@@ -362,10 +316,7 @@ def _generate_partner_report(
                 total_flagged += fc
 
         partners_str = ", ".join(sorted(partner_set))
-        lines.append(
-            f"| {flag_name} | {partners_str} | {tables_with_flag} "
-            f"| {flag_small_cell(total_flagged)} |"
-        )
+        lines.append(f"| {flag_name} | {partners_str} | {tables_with_flag} | {flag_small_cell(total_flagged)} |")
     lines.append("")
 
     # ── Section 2: ICD_MAPPED Partners ───────────────────────────────────
@@ -376,17 +327,11 @@ def _generate_partner_report(
         icd_total += stats["flags"].get("ICD_MAPPED", 0)
 
     lines.append(f"- **Total records flagged:** {flag_small_cell(icd_total)}")
-    lines.append(
-        "- These partners retrospectively mapped ICD-9 → ICD-10, so "
-        "pre-October-2015 ICD-10 codes are expected for their records."
-    )
+    lines.append("- These partners retrospectively mapped ICD-9 → ICD-10, so pre-October-2015 ICD-10 codes are expected for their records.")
 
     concordance_csv = reports_dir / "icd_concordance.csv"
     if concordance_csv.exists():
-        lines.append(
-            f"- Cross-reference: see `reports/icd_concordance.csv` "
-            f"from Phase 4 validation for per-partner ICD breakdown."
-        )
+        lines.append("- Cross-reference: see `reports/icd_concordance.csv` from Phase 4 validation for per-partner ICD breakdown.")
     lines.append("")
 
     # ── Section 3: CLAIMS_ONLY Partner ───────────────────────────────────
@@ -517,16 +462,10 @@ def main(config_path: Path | None = None) -> None:
         df = add_partner_flags(df)
 
         # (g) Event-encounter window check
-        if (
-            table_name in EVENT_DATE_COLS
-            and encounter_ref is not None
-            and "ENCOUNTERID" in df.columns
-        ):
+        if table_name in EVENT_DATE_COLS and encounter_ref is not None and "ENCOUNTERID" in df.columns:
             event_date_col = EVENT_DATE_COLS[table_name]
             if event_date_col in df.columns:
-                df = flag_events_outside_encounters(
-                    df, encounter_ref, event_date_col
-                )
+                df = flag_events_outside_encounters(df, encounter_ref, event_date_col)
 
         # (h) ENCOUNTER-specific: enrollment coverage
         if table_name == "ENCOUNTER" and enrollment_ref is not None:
@@ -537,10 +476,7 @@ def main(config_path: Path | None = None) -> None:
         stats = write_cleaned(df, pq_path)
 
         # (j) Count rows with any Phase 5 flag
-        flag_cols = [
-            c for c in df.columns
-            if c in CLEAN_FLAG_COLS or c.startswith(CLEAN_FLAG_PREFIX)
-        ]
+        flag_cols = [c for c in df.columns if c in CLEAN_FLAG_COLS or c.startswith(CLEAN_FLAG_PREFIX)]
         if flag_cols:
             any_flag_expr = pl.lit(False)
             for fc in flag_cols:
@@ -572,19 +508,13 @@ def main(config_path: Path | None = None) -> None:
     if demo_consistency:
         n_birth = len(demo_consistency.get("multi_birth_date", []))
         n_sex = len(demo_consistency.get("multi_sex", []))
-        print(
-            f"  Demographics: {n_birth} multi-BIRTH_DATE, "
-            f"{n_sex} multi-SEX patients"
-        )
+        print(f"  Demographics: {n_birth} multi-BIRTH_DATE, {n_sex} multi-SEX patients")
     else:
         print("  Demographics: DEMOGRAPHIC table not available")
 
     death_consistency = check_death_consistency(table_map)
     if death_consistency:
-        print(
-            f"  Death dates: {death_consistency['patients_checked']} checked, "
-            f"{death_consistency['patients_mismatched']} mismatched"
-        )
+        print(f"  Death dates: {death_consistency['patients_checked']} checked, {death_consistency['patients_mismatched']} mismatched")
     else:
         print("  Death dates: DEATH table not available")
 
@@ -596,9 +526,7 @@ def main(config_path: Path | None = None) -> None:
     rpt_dedup = _generate_dedup_report(report_data, reports_dir, paths)
     print(f"  Written: {rpt_dedup}")
 
-    rpt_consistency = _generate_consistency_report(
-        report_data, demo_consistency, death_consistency, reports_dir, paths
-    )
+    rpt_consistency = _generate_consistency_report(report_data, demo_consistency, death_consistency, reports_dir, paths)
     print(f"  Written: {rpt_consistency}")
 
     rpt_partner = _generate_partner_report(report_data, reports_dir, paths)
@@ -607,9 +535,7 @@ def main(config_path: Path | None = None) -> None:
     # ── Step 6: Console summary ──────────────────────────────────────────
     overall_elapsed = time.time() - overall_start
     total_flag_cols = sum(s["flag_columns_added"] for s in report_data.values())
-    total_flagged_rows = sum(
-        s.get("rows_with_any_flag", 0) for s in report_data.values()
-    )
+    total_flagged_rows = sum(s.get("rows_with_any_flag", 0) for s in report_data.values())
 
     print(f"\n{'=' * 60}")
     print("  DEDUPLICATION & HARMONIZATION COMPLETE")
@@ -618,7 +544,7 @@ def main(config_path: Path | None = None) -> None:
     print(f"  Total flag columns:    {total_flag_cols}")
     print(f"  Total flagged rows:    {total_flagged_rows:,}")
     print(f"  Elapsed:               {overall_elapsed:.1f}s")
-    print(f"  Reports:")
+    print("  Reports:")
     print(f"    - {rpt_dedup}")
     print(f"    - {rpt_consistency}")
     print(f"    - {rpt_partner}")
@@ -634,9 +560,10 @@ if __name__ == "__main__":
         raise
     except Exception as exc:
         print(f"\n{'=' * 60}")
-        print(f"  DEDUPLICATION & HARMONIZATION FAILED")
+        print("  DEDUPLICATION & HARMONIZATION FAILED")
         print(f"{'=' * 60}")
         print(f"  Error: {exc}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)

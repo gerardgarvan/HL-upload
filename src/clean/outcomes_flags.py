@@ -1,5 +1,5 @@
-# HL data loading & cleaning — modality flags from Outcomes.xlsx
-"""Load Outcomes sheet, build code-to-modality lookup, add MODALITY_* flags to patient-level.
+# HL data loading & cleaning — modality flags from Outcomes.csv
+"""Load Outcomes.csv, build code-to-modality lookup, add MODALITY_* flags to patient-level.
 
 Uses PROCEDURES.PX, LAB_RESULT_CM.LAB_LOINC, DIAGNOSIS.DX to detect modality codes.
 """
@@ -34,14 +34,14 @@ def _normalize_code(code: str) -> str:
 
 
 def load_outcomes_code_lookup(path: Path) -> dict[str, dict[str, set[str]]]:
-    """Load Outcomes sheet from Outcomes.xlsx and build modality→code_sets lookup.
+    """Load Outcomes.csv and build modality→code_sets lookup.
 
     Forward-fills Modality and Code system. Returns:
     {modality_slug: {"cpt_hcpcs": set, "loinc": set, "icd10": set}}
 
     Codes are normalized (uppercase, stripped) for matching.
     """
-    df = pd.read_excel(path, sheet_name="Outcomes")
+    df = pd.read_csv(path)
     df["Modality"] = df["Modality"].ffill()
     df["Code system"] = df["Code system"].ffill()
 
@@ -81,7 +81,7 @@ def add_modality_flags(
     table_map: dict[str, Path],
     outcomes_path: Path,
 ) -> pl.DataFrame:
-    """Add MODALITY_* flag columns to patient_df using Outcomes.xlsx code lookup.
+    """Add MODALITY_* flag columns to patient_df using Outcomes.csv code lookup.
 
     Scans PROCEDURES.PX, LAB_RESULT_CM.LAB_LOINC, DIAGNOSIS.DX for matching codes.
     MODALITY_{slug} = 1 if patient has ≥1 match in any table, else 0.
@@ -137,12 +137,7 @@ def add_modality_flags(
                 .with_columns(pl.col(PATID_COL).cast(pl.String))
                 .filter(pl.col(PATID_COL).is_in(id_list))
                 .with_columns(
-                    pl.col("DX")
-                    .cast(pl.String)
-                    .str.to_uppercase()
-                    .str.replace_all(r"\.", "")
-                    .str.strip_chars()
-                    .alias("_DX_NORM")
+                    pl.col("DX").cast(pl.String).str.to_uppercase().str.replace_all(r"\.", "").str.strip_chars().alias("_DX_NORM")
                 )
                 .filter(pl.col("_DX_NORM").is_in(icd_codes))
                 .select(PATID_COL)
@@ -153,12 +148,8 @@ def add_modality_flags(
 
         col_name = f"MODALITY_{slug}"
         if matched_ids:
-            flag_df = pl.DataFrame({PATID_COL: list(matched_ids)}).with_columns(
-                pl.lit(1, dtype=pl.Int8).alias(col_name)
-            )
-            result = result.join(flag_df, on=PATID_COL, how="left").with_columns(
-                pl.col(col_name).fill_null(0).cast(pl.Int8)
-            )
+            flag_df = pl.DataFrame({PATID_COL: list(matched_ids)}).with_columns(pl.lit(1, dtype=pl.Int8).alias(col_name))
+            result = result.join(flag_df, on=PATID_COL, how="left").with_columns(pl.col(col_name).fill_null(0).cast(pl.Int8))
         else:
             result = result.with_columns(pl.lit(0, dtype=pl.Int8).alias(col_name))
 

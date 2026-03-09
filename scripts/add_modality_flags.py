@@ -1,11 +1,11 @@
-"""Add modality flags to existing patient_level.parquet from Outcomes.xlsx.
+"""Add modality flags to existing patient_level.parquet from Outcomes.csv.
 
 Usage:
     python scripts/add_modality_flags.py [config/paths.toml]
 
 Reads patient_level.parquet, PROCEDURES, LAB_RESULT_CM, DIAGNOSIS from parquet_dir,
-adds MODALITY_* columns using Outcomes.xlsx (project root), writes back to derived/.
-Outcomes path: OUTCOMES_PATH env or project root / Outcomes.xlsx.
+adds MODALITY_* columns using Outcomes.csv (project root), writes back to derived/.
+Outcomes path: OUTCOMES_PATH env or project root / Outcomes.csv.
 """
 
 import os
@@ -36,7 +36,7 @@ def main(config_path: Path | None = None) -> None:
 
     derived_dir = paths.parquet_dir.parent / "derived"
     patient_path = derived_dir / "patient_level.parquet"
-    outcomes_path = Path(os.environ.get("OUTCOMES_PATH", str(PROJECT_ROOT / "Outcomes.xlsx")))
+    outcomes_path = Path(os.environ.get("OUTCOMES_PATH", str(PROJECT_ROOT / "Outcomes.csv")))
 
     if not patient_path.exists():
         print(f"Error: {patient_path} not found. Run assemble_clean.py first.")

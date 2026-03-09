@@ -51,6 +51,4 @@ def verify_files_exist(data_root: Path, table_filenames: list[str]) -> None:
         if not (data_root / name).exists():
             missing.append(name)
     if missing:
-        raise FileNotFoundError(
-            f"Missing table files under {data_root}: {missing}"
-        )
+        raise FileNotFoundError(f"Missing table files under {data_root}: {missing}")

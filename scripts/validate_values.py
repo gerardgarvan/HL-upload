@@ -14,14 +14,21 @@ Designed for HPC interactive sessions (srun --pty bash).
 
 import sys
 import time
-from datetime import datetime, date
+from datetime import datetime
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+import polars as pl
+
 from src.load.config import load_config
 from src.load.schema import parse_datastructure, resolve_table_name
+from src.validate.cohort import (
+    ALL_HL_CODES,
+    ALL_HL_NORMALIZED,
+    detect_dx_format,
+)
 from src.validate.structural import (
     PATID_COL,
     SMALL_CELL_THRESHOLD,
@@ -29,40 +36,30 @@ from src.validate.structural import (
     flag_small_cell,
 )
 from src.validate.values import (
-    build_valueset_lookup,
-    validate_coded_fields,
-    validate_vital_plausibility,
-    validate_lab_plausibility,
-    detect_mapped_partners,
-    validate_icd_concordance,
-    validate_temporal_encounter,
-    validate_future_dates,
-    validate_enrollment_dates,
-    validate_tumor_registry,
-    drop_existing_flags,
-    write_validated,
-    MASKED_BIRTH_DATE,
-    ICD10_TRANSITION,
     HL_LAB_RANGES,
+    ICD10_TRANSITION,
+    MASKED_BIRTH_DATE,
     VITAL_RANGES,
+    build_valueset_lookup,
+    detect_mapped_partners,
+    drop_existing_flags,
+    validate_coded_fields,
+    validate_enrollment_dates,
+    validate_future_dates,
+    validate_icd_concordance,
+    validate_lab_plausibility,
+    validate_temporal_encounter,
+    validate_tumor_registry,
+    validate_vital_plausibility,
+    write_validated,
 )
-from src.validate.cohort import (
-    detect_dx_format,
-    ALL_HL_CODES,
-    ALL_HL_NORMALIZED,
-)
-
-import polars as pl
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _build_table_map(
-    table_filenames: list[str], parquet_dir: Path
-) -> dict[str, Path]:
+def _build_table_map(table_filenames: list[str], parquet_dir: Path) -> dict[str, Path]:
     """Build mapping from table_name -> parquet_path."""
     table_map: dict[str, Path] = {}
     for filename in table_filenames:
@@ -83,8 +80,9 @@ def _load_birth_death_lookup(
     """
     demo_path = table_map.get("DEMOGRAPHIC")
     if not demo_path or not demo_path.exists():
-        return pl.DataFrame(schema={PATID_COL: pl.String, "BIRTH_DATE": pl.Date}), \
-               pl.DataFrame(schema={PATID_COL: pl.String, "DEATH_DATE": pl.Date})
+        return pl.DataFrame(schema={PATID_COL: pl.String, "BIRTH_DATE": pl.Date}), pl.DataFrame(
+            schema={PATID_COL: pl.String, "DEATH_DATE": pl.Date}
+        )
 
     demo = pl.read_parquet(demo_path)
     select_cols = [PATID_COL, "BIRTH_DATE"]
@@ -98,10 +96,7 @@ def _load_birth_death_lookup(
         )
 
     # Masked birth date recovery from TUMOR_REGISTRY
-    masked = birth_df.filter(
-        pl.col("BIRTH_DATE").is_not_null()
-        & (pl.col("BIRTH_DATE") == MASKED_BIRTH_DATE)
-    )
+    masked = birth_df.filter(pl.col("BIRTH_DATE").is_not_null() & (pl.col("BIRTH_DATE") == MASKED_BIRTH_DATE))
     if masked.height > 0:
         masked_ids = set(masked[PATID_COL].to_list())
         for tr_name in sorted(TUMOR_REGISTRY_TABLES):
@@ -116,9 +111,7 @@ def _load_birth_death_lookup(
             tr = tr.filter(pl.col(PATID_COL).is_in(masked_ids))
             if tr.is_empty():
                 continue
-            tr = tr.with_columns(
-                pl.col("AGE_AT_DIAGNOSIS").cast(pl.Float64, strict=False)
-            )
+            tr = tr.with_columns(pl.col("AGE_AT_DIAGNOSIS").cast(pl.Float64, strict=False))
             tr = tr.filter(
                 pl.col("AGE_AT_DIAGNOSIS").is_not_null()
                 & pl.col("DATE_OF_DIAGNOSIS").is_not_null()
@@ -142,35 +135,22 @@ def _load_birth_death_lookup(
                     pl.col("DATE_OF_DIAGNOSIS").first().alias("_dx_date"),
                     pl.col("AGE_AT_DIAGNOSIS").first().alias("_age"),
                 )
-                .with_columns(
-                    (
-                        pl.col("_dx_date").dt.year()
-                        - pl.col("_age").cast(pl.Int32)
-                    ).alias("_birth_year")
-                )
-                .with_columns(
-                    pl.date(pl.col("_birth_year"), 1, 1).alias("_approx_birth")
-                )
+                .with_columns((pl.col("_dx_date").dt.year() - pl.col("_age").cast(pl.Int32)).alias("_birth_year"))
+                .with_columns(pl.date(pl.col("_birth_year"), 1, 1).alias("_approx_birth"))
                 .select(PATID_COL, "_approx_birth")
             )
             # Update birth_df for recovered patients
             birth_df = (
                 birth_df.join(approx, on=PATID_COL, how="left")
                 .with_columns(
-                    pl.when(
-                        pl.col("BIRTH_DATE").eq(MASKED_BIRTH_DATE)
-                        & pl.col("_approx_birth").is_not_null()
-                    )
+                    pl.when(pl.col("BIRTH_DATE").eq(MASKED_BIRTH_DATE) & pl.col("_approx_birth").is_not_null())
                     .then(pl.col("_approx_birth"))
                     .otherwise(pl.col("BIRTH_DATE"))
                     .alias("BIRTH_DATE")
                 )
                 .drop("_approx_birth")
             )
-            recovered = birth_df.filter(
-                pl.col(PATID_COL).is_in(masked_ids)
-                & (pl.col("BIRTH_DATE") != MASKED_BIRTH_DATE)
-            ).height
+            recovered = birth_df.filter(pl.col(PATID_COL).is_in(masked_ids) & (pl.col("BIRTH_DATE") != MASKED_BIRTH_DATE)).height
             print(f"    Recovered {recovered} masked birth dates from {tr_name}")
             break  # one TR table is enough
 
@@ -235,11 +215,7 @@ def _validate_against_death(
     for col in date_cols:
         flag_name = f"{col}_val_after_death"
         df = df.with_columns(
-            pl.when(
-                pl.col("DEATH_DATE").is_not_null()
-                & pl.col(col).is_not_null()
-                & (pl.col(col).cast(pl.Date) > pl.col("DEATH_DATE"))
-            )
+            pl.when(pl.col("DEATH_DATE").is_not_null() & pl.col(col).is_not_null() & (pl.col(col).cast(pl.Date) > pl.col("DEATH_DATE")))
             .then(pl.lit(1))
             .otherwise(pl.lit(0))
             .cast(pl.Int8)
@@ -252,12 +228,7 @@ def _validate_against_death(
 
 def _get_date_columns(df: pl.DataFrame) -> list[str]:
     """Return date/datetime column names, excluding existing flag columns."""
-    return [
-        c for c in df.columns
-        if df.schema[c] in (pl.Date, pl.Datetime)
-        or isinstance(df.schema[c], pl.Datetime)
-        if "_val_" not in c
-    ]
+    return [c for c in df.columns if df.schema[c] in (pl.Date, pl.Datetime) or isinstance(df.schema[c], pl.Datetime) if "_val_" not in c]
 
 
 def _compute_hl_timeline(
@@ -286,10 +257,7 @@ def _compute_hl_timeline(
     dx_format = detect_dx_format(diag_path)
     code_set = ALL_HL_CODES if dx_format == "dotted" else ALL_HL_NORMALIZED
 
-    dx_match_col = (
-        pl.col("DX") if dx_format == "dotted"
-        else pl.col("DX").str.to_uppercase().str.replace_all(r"\.", "")
-    )
+    dx_match_col = pl.col("DX") if dx_format == "dotted" else pl.col("DX").str.to_uppercase().str.replace_all(r"\.", "")
 
     diag = (
         pl.scan_parquet(diag_path)
@@ -303,10 +271,7 @@ def _compute_hl_timeline(
     if diag.is_empty():
         return result
 
-    first_dx = (
-        diag.group_by(PATID_COL)
-        .agg(pl.col("DX_DATE").min().alias("FIRST_HL_DX_DATE"))
-    )
+    first_dx = diag.group_by(PATID_COL).agg(pl.col("DX_DATE").min().alias("FIRST_HL_DX_DATE"))
     result["total_patients"] = first_dx.height
 
     # Collect first treatment dates from multiple sources
@@ -314,10 +279,16 @@ def _compute_hl_timeline(
 
     # PROCEDURES — stem cell transplant and radiation CPTs
     sct_cpts = {
-        "38240", "38241", "38242",  # stem cell transplant
-        "38230", "38232",           # bone marrow harvest
-        "77401", "77402", "77407", "77412",  # radiation therapy
-        "77427",                    # radiation management
+        "38240",
+        "38241",
+        "38242",  # stem cell transplant
+        "38230",
+        "38232",  # bone marrow harvest
+        "77401",
+        "77402",
+        "77407",
+        "77412",  # radiation therapy
+        "77427",  # radiation management
     }
     px_path = table_map.get("PROCEDURES")
     if px_path and px_path.exists():
@@ -377,16 +348,13 @@ def _compute_hl_timeline(
         for tc in available_tx:
             if tr[tc].dtype == pl.String or tr[tc].dtype == pl.Utf8:
                 tr = tr.with_columns(
-                    pl.col(tc).str.to_date("%Y.%m.%d", strict=False)
+                    pl.col(tc)
+                    .str.to_date("%Y.%m.%d", strict=False)
                     .fill_null(pl.col(tc).str.to_date("%m/%d/%Y", strict=False))
                     .fill_null(pl.col(tc).str.to_date("%d%b%Y", strict=False))
                     .fill_null(pl.col(tc).str.to_date("%Y%m%d", strict=False))
                 )
-            tc_df = (
-                tr.filter(pl.col(tc).is_not_null())
-                .group_by(PATID_COL)
-                .agg(pl.col(tc).min().alias("FIRST_TX_DATE"))
-            )
+            tc_df = tr.filter(pl.col(tc).is_not_null()).group_by(PATID_COL).agg(pl.col(tc).min().alias("FIRST_TX_DATE"))
             if not tc_df.is_empty():
                 tx_frames.append(tc_df)
 
@@ -395,10 +363,7 @@ def _compute_hl_timeline(
 
     # Combine all treatment dates and pick earliest per patient
     all_tx = pl.concat(tx_frames)
-    earliest_tx = (
-        all_tx.group_by(PATID_COL)
-        .agg(pl.col("FIRST_TX_DATE").min().alias("FIRST_TX_DATE"))
-    )
+    earliest_tx = all_tx.group_by(PATID_COL).agg(pl.col("FIRST_TX_DATE").min().alias("FIRST_TX_DATE"))
 
     # Join with first DX date
     timeline = first_dx.join(earliest_tx, on=PATID_COL, how="left")
@@ -408,11 +373,7 @@ def _compute_hl_timeline(
     if with_tx.is_empty():
         return result
 
-    with_tx = with_tx.with_columns(
-        (pl.col("FIRST_TX_DATE") - pl.col("FIRST_HL_DX_DATE"))
-        .dt.total_days()
-        .alias("DX_TO_TX_DAYS")
-    )
+    with_tx = with_tx.with_columns((pl.col("FIRST_TX_DATE") - pl.col("FIRST_HL_DX_DATE")).dt.total_days().alias("DX_TO_TX_DAYS"))
 
     median_val = with_tx["DX_TO_TX_DAYS"].median()
     result["median_dx_to_tx"] = int(median_val) if median_val is not None else None
@@ -459,10 +420,7 @@ def _section_overview(report_data: dict) -> str:
         total = stats["total_rows"]
         n_flags = stats["flag_columns_added"]
         flagged_rows = stats.get("rows_with_any_flag", 0)
-        lines.append(
-            f"| {table_name} | {total:,} | {n_flags} "
-            f"| {flag_small_cell(flagged_rows)} |"
-        )
+        lines.append(f"| {table_name} | {total:,} | {n_flags} | {flag_small_cell(flagged_rows)} |")
     lines.append("")
     return "\n".join(lines)
 
@@ -475,10 +433,7 @@ def _section_valueset(report_data: dict) -> str:
     any_found = False
     for table_name in sorted(report_data.keys()):
         stats = report_data[table_name]
-        code_flags = {
-            k: v for k, v in stats["flags"].items()
-            if k.endswith("_val_code")
-        }
+        code_flags = {k: v for k, v in stats["flags"].items() if k.endswith("_val_code")}
         if not code_flags:
             continue
         any_found = True
@@ -490,10 +445,7 @@ def _section_valueset(report_data: dict) -> str:
             field = flag_col.replace("_val_code", "")
             rate = count / max(total, 1) * 100
             highlight = " ⚠ >5%" if rate > 5 else ""
-            lines.append(
-                f"| {field} | {flag_small_cell(count)} | {total:,} "
-                f"| {rate:.2f}%{highlight} |"
-            )
+            lines.append(f"| {field} | {flag_small_cell(count)} | {total:,} | {rate:.2f}%{highlight} |")
         lines.append("")
 
     if not any_found:
@@ -511,12 +463,7 @@ def _section_plausibility(report_data: dict) -> str:
     lines.append("### Vital Signs\n")
     vital_table = None
     for tbl, stats in report_data.items():
-        range_flags = {
-            k: v for k, v in stats["flags"].items()
-            if k.endswith("_val_range") and any(
-                k.startswith(m) for m in VITAL_RANGES
-            )
-        }
+        range_flags = {k: v for k, v in stats["flags"].items() if k.endswith("_val_range") and any(k.startswith(m) for m in VITAL_RANGES)}
         if range_flags:
             vital_table = tbl
             lines.append("| Measure | Range | Flagged | % |")
@@ -526,10 +473,7 @@ def _section_plausibility(report_data: dict) -> str:
                 measure = flag_col.replace("_val_range", "")
                 lo, hi = VITAL_RANGES.get(measure, (0, 0))
                 rate = count / max(total, 1) * 100
-                lines.append(
-                    f"| {measure} | {lo}–{hi} "
-                    f"| {flag_small_cell(count)} | {rate:.2f}% |"
-                )
+                lines.append(f"| {measure} | {lo}–{hi} | {flag_small_cell(count)} | {rate:.2f}% |")
             lines.append("")
             break
 
@@ -545,27 +489,18 @@ def _section_plausibility(report_data: dict) -> str:
             total = stats["total_rows"]
             range_count = stats["flags"]["RESULT_NUM_val_range"]
             rate = range_count / max(total, 1) * 100
-            lines.append(
-                f"- **RESULT_NUM out-of-range:** {flag_small_cell(range_count)} "
-                f"({rate:.2f}%)"
-            )
+            lines.append(f"- **RESULT_NUM out-of-range:** {flag_small_cell(range_count)} ({rate:.2f}%)")
             if "RESULT_UNIT_val_missing" in stats["flags"]:
                 unit_count = stats["flags"]["RESULT_UNIT_val_missing"]
                 unit_rate = unit_count / max(total, 1) * 100
-                lines.append(
-                    f"- **RESULT_UNIT missing:** {flag_small_cell(unit_count)} "
-                    f"({unit_rate:.2f}%)"
-                )
+                lines.append(f"- **RESULT_UNIT missing:** {flag_small_cell(unit_count)} ({unit_rate:.2f}%)")
             lines.append("")
 
             lines.append("#### Lab Ranges Checked\n")
             lines.append("| Lab | LOINC | Range | Unit |")
             lines.append("|-----|-------|-------|------|")
             for loinc, info in sorted(HL_LAB_RANGES.items(), key=lambda x: x[1]["name"]):
-                lines.append(
-                    f"| {info['name']} | {loinc} "
-                    f"| {info['min']}–{info['max']} | {info['unit']} |"
-                )
+                lines.append(f"| {info['name']} | {loinc} | {info['min']}–{info['max']} | {info['unit']} |")
             lines.append("")
             break
 
@@ -590,7 +525,7 @@ def _section_icd_concordance(concordance_data: dict) -> str:
 
     lines.append(f"- **Total DX records:** {total_dx:,}")
     lines.append(f"- **Flagged:** {flag_small_cell(total_flagged)} ({flag_rate:.2f}%)")
-    lines.append(f"- **Grace period:** Jul 2015 – Jan 2016\n")
+    lines.append("- **Grace period:** Jul 2015 – Jan 2016\n")
 
     if "partner_breakdown" in concordance_data:
         lines.append("### Per-Partner Breakdown\n")
@@ -609,8 +544,7 @@ def _section_icd_concordance(concordance_data: dict) -> str:
         lines.append("")
 
     lines.append(
-        "> **Note:** Grace period (Jul 2015 – Jan 2016) allows both ICD-9 and "
-        "ICD-10 codes. AMS and UMI auto-detected as mapped partners.\n"
+        "> **Note:** Grace period (Jul 2015 – Jan 2016) allows both ICD-9 and ICD-10 codes. AMS and UMI auto-detected as mapped partners.\n"
     )
 
     return "\n".join(lines)
@@ -628,17 +562,9 @@ def _section_temporal(report_data: dict, hl_timeline: dict) -> str:
             ad = stats["flags"]["_val_admit_discharge"]
             sd = stats["flags"].get("_val_same_day", 0)
             total = stats["total_rows"]
-            lines.append(
-                f"- **Admit > Discharge:** {flag_small_cell(ad)} "
-                f"({ad / max(total, 1) * 100:.2f}%)"
-            )
-            lines.append(
-                f"- **Same-day encounters:** {flag_small_cell(sd)} "
-                f"({sd / max(total, 1) * 100:.2f}%)"
-            )
-            lines.append(
-                "  - *Note: Same-day encounters are expected for outpatient visits*"
-            )
+            lines.append(f"- **Admit > Discharge:** {flag_small_cell(ad)} ({ad / max(total, 1) * 100:.2f}%)")
+            lines.append(f"- **Same-day encounters:** {flag_small_cell(sd)} ({sd / max(total, 1) * 100:.2f}%)")
+            lines.append("  - *Note: Same-day encounters are expected for outpatient visits*")
             lines.append("")
             break
 
@@ -649,10 +575,7 @@ def _section_temporal(report_data: dict, hl_timeline: dict) -> str:
     any_future = False
     for tbl in sorted(report_data.keys()):
         stats = report_data[tbl]
-        future_flags = {
-            k: v for k, v in stats["flags"].items()
-            if k.endswith("_val_future") and v > 0
-        }
+        future_flags = {k: v for k, v in stats["flags"].items() if k.endswith("_val_future") and v > 0}
         for fc, count in sorted(future_flags.items()):
             lines.append(f"| {tbl} | {fc} | {flag_small_cell(count)} |")
             any_future = True
@@ -671,9 +594,7 @@ def _section_temporal(report_data: dict, hl_timeline: dict) -> str:
             if ("_val_before_birth" in fc or "_val_after_death" in fc) and count > 0:
                 check = "Before birth" if "before_birth" in fc else "After death"
                 col_name = fc.split("_val_")[0]
-                lines.append(
-                    f"| {tbl} | {check} ({col_name}) | {flag_small_cell(count)} |"
-                )
+                lines.append(f"| {tbl} | {check} ({col_name}) | {flag_small_cell(count)} |")
                 any_bd = True
     if not any_bd:
         lines.append("| — | — | No violations found |")
@@ -685,10 +606,7 @@ def _section_temporal(report_data: dict, hl_timeline: dict) -> str:
         if "_val_enr_dates" in stats["flags"]:
             enr = stats["flags"]["_val_enr_dates"]
             total = stats["total_rows"]
-            lines.append(
-                f"- **ENR_START > ENR_END:** {flag_small_cell(enr)} "
-                f"({enr / max(total, 1) * 100:.2f}%)"
-            )
+            lines.append(f"- **ENR_START > ENR_END:** {flag_small_cell(enr)} ({enr / max(total, 1) * 100:.2f}%)")
             break
     lines.append("")
 
@@ -698,22 +616,11 @@ def _section_temporal(report_data: dict, hl_timeline: dict) -> str:
         lines.append("No HL diagnosis data available for timeline analysis.\n")
     else:
         lines.append(f"- **HL patients with DX date:** {hl_timeline['total_patients']:,}")
-        lines.append(
-            f"- **Patients with any treatment record:** "
-            f"{flag_small_cell(hl_timeline['with_treatment'])}"
-        )
+        lines.append(f"- **Patients with any treatment record:** {flag_small_cell(hl_timeline['with_treatment'])}")
         if hl_timeline["median_dx_to_tx"] is not None:
-            lines.append(
-                f"- **Median DX→TX days:** {hl_timeline['median_dx_to_tx']}"
-            )
-        lines.append(
-            f"- **Treatment before DX (flagged):** "
-            f"{flag_small_cell(hl_timeline['flagged_before_dx'])}"
-        )
-        lines.append(
-            f"- **DX→TX gap > 365 days (flagged):** "
-            f"{flag_small_cell(hl_timeline['flagged_over_365'])}"
-        )
+            lines.append(f"- **Median DX→TX days:** {hl_timeline['median_dx_to_tx']}")
+        lines.append(f"- **Treatment before DX (flagged):** {flag_small_cell(hl_timeline['flagged_before_dx'])}")
+        lines.append(f"- **DX→TX gap > 365 days (flagged):** {flag_small_cell(hl_timeline['flagged_over_365'])}")
         lines.append("")
 
         if hl_timeline["distribution_buckets"]:
@@ -724,9 +631,7 @@ def _section_temporal(report_data: dict, hl_timeline: dict) -> str:
                 lines.append(f"| {bucket} days | {flag_small_cell(count)} |")
             lines.append("")
 
-        lines.append(
-            "> *Expected window: 0–365 days from first HL diagnosis to first treatment.*\n"
-        )
+        lines.append("> *Expected window: 0–365 days from first HL diagnosis to first treatment.*\n")
 
     return "\n".join(lines)
 
@@ -736,18 +641,13 @@ def _section_tumor_registry(report_data: dict) -> str:
     lines: list[str] = []
     lines.append("## 6. Tumor Registry Validation\n")
 
-    tr_tables = {
-        tbl: stats for tbl, stats in report_data.items()
-        if tbl in TUMOR_REGISTRY_TABLES
-    }
+    tr_tables = {tbl: stats for tbl, stats in report_data.items() if tbl in TUMOR_REGISTRY_TABLES}
 
     if not tr_tables:
         lines.append("No TUMOR_REGISTRY tables found in validated data.\n")
         return "\n".join(lines)
 
-    lines.append(
-        "> Only ORL, TMH, UFH partners have TUMOR_REGISTRY data.\n"
-    )
+    lines.append("> Only ORL, TMH, UFH partners have TUMOR_REGISTRY data.\n")
 
     # Map flag columns to check descriptions
     check_map = {
@@ -771,19 +671,14 @@ def _section_tumor_registry(report_data: dict) -> str:
             if flag_col in stats["flags"]:
                 count = stats["flags"][flag_col]
                 rate = count / max(total, 1) * 100
-                lines.append(
-                    f"| {check} | {field} | {flag_small_cell(count)} | {rate:.2f}% |"
-                )
+                lines.append(f"| {check} | {field} | {flag_small_cell(count)} | {rate:.2f}% |")
 
         # Treatment timing flags
         for fc, count in sorted(stats["flags"].items()):
             if fc.endswith(tx_prefix) and count > 0:
                 field = fc.replace(tx_prefix, "")
                 rate = count / max(total, 1) * 100
-                lines.append(
-                    f"| treatment_timing | {field} "
-                    f"| {flag_small_cell(count)} | {rate:.2f}% |"
-                )
+                lines.append(f"| treatment_timing | {field} | {flag_small_cell(count)} | {rate:.2f}% |")
 
         lines.append("")
 
@@ -805,67 +700,97 @@ def _write_temporal_issues_csv(
         # Admit/discharge
         if "_val_admit_discharge" in stats["flags"]:
             count = stats["flags"]["_val_admit_discharge"]
-            rows.append({
-                "table": tbl, "check_type": "admit_discharge",
-                "flagged_count": _suppress(count), "total_rows": total,
-                "flag_rate": f"{count / max(total, 1) * 100:.2f}%",
-            })
+            rows.append(
+                {
+                    "table": tbl,
+                    "check_type": "admit_discharge",
+                    "flagged_count": _suppress(count),
+                    "total_rows": total,
+                    "flag_rate": f"{count / max(total, 1) * 100:.2f}%",
+                }
+            )
         if "_val_same_day" in stats["flags"]:
             count = stats["flags"]["_val_same_day"]
-            rows.append({
-                "table": tbl, "check_type": "same_day",
-                "flagged_count": _suppress(count), "total_rows": total,
-                "flag_rate": f"{count / max(total, 1) * 100:.2f}%",
-            })
+            rows.append(
+                {
+                    "table": tbl,
+                    "check_type": "same_day",
+                    "flagged_count": _suppress(count),
+                    "total_rows": total,
+                    "flag_rate": f"{count / max(total, 1) * 100:.2f}%",
+                }
+            )
 
         # Future dates
         for fc, count in stats["flags"].items():
             if fc.endswith("_val_future") and count > 0:
-                rows.append({
-                    "table": tbl, "check_type": "future_date",
-                    "flagged_count": _suppress(count), "total_rows": total,
-                    "flag_rate": f"{count / max(total, 1) * 100:.2f}%",
-                })
+                rows.append(
+                    {
+                        "table": tbl,
+                        "check_type": "future_date",
+                        "flagged_count": _suppress(count),
+                        "total_rows": total,
+                        "flag_rate": f"{count / max(total, 1) * 100:.2f}%",
+                    }
+                )
 
         # Before-birth / after-death
         for fc, count in stats["flags"].items():
             if "_val_before_birth" in fc and count > 0:
-                rows.append({
-                    "table": tbl, "check_type": "before_birth",
-                    "flagged_count": _suppress(count), "total_rows": total,
-                    "flag_rate": f"{count / max(total, 1) * 100:.2f}%",
-                })
+                rows.append(
+                    {
+                        "table": tbl,
+                        "check_type": "before_birth",
+                        "flagged_count": _suppress(count),
+                        "total_rows": total,
+                        "flag_rate": f"{count / max(total, 1) * 100:.2f}%",
+                    }
+                )
             if "_val_after_death" in fc and count > 0:
-                rows.append({
-                    "table": tbl, "check_type": "after_death",
-                    "flagged_count": _suppress(count), "total_rows": total,
-                    "flag_rate": f"{count / max(total, 1) * 100:.2f}%",
-                })
+                rows.append(
+                    {
+                        "table": tbl,
+                        "check_type": "after_death",
+                        "flagged_count": _suppress(count),
+                        "total_rows": total,
+                        "flag_rate": f"{count / max(total, 1) * 100:.2f}%",
+                    }
+                )
 
         # Enrollment
         if "_val_enr_dates" in stats["flags"]:
             count = stats["flags"]["_val_enr_dates"]
-            rows.append({
-                "table": tbl, "check_type": "enr_dates",
-                "flagged_count": _suppress(count), "total_rows": total,
-                "flag_rate": f"{count / max(total, 1) * 100:.2f}%",
-            })
+            rows.append(
+                {
+                    "table": tbl,
+                    "check_type": "enr_dates",
+                    "flagged_count": _suppress(count),
+                    "total_rows": total,
+                    "flag_rate": f"{count / max(total, 1) * 100:.2f}%",
+                }
+            )
 
     # HL timeline summary rows
     if hl_timeline["total_patients"] > 0:
         tp = hl_timeline["total_patients"]
-        rows.append({
-            "table": "CROSS_TABLE", "check_type": "hl_timeline_before_dx",
-            "flagged_count": _suppress(hl_timeline["flagged_before_dx"]),
-            "total_rows": tp,
-            "flag_rate": f"{hl_timeline['flagged_before_dx'] / max(tp, 1) * 100:.2f}%",
-        })
-        rows.append({
-            "table": "CROSS_TABLE", "check_type": "hl_timeline_over_365",
-            "flagged_count": _suppress(hl_timeline["flagged_over_365"]),
-            "total_rows": tp,
-            "flag_rate": f"{hl_timeline['flagged_over_365'] / max(tp, 1) * 100:.2f}%",
-        })
+        rows.append(
+            {
+                "table": "CROSS_TABLE",
+                "check_type": "hl_timeline_before_dx",
+                "flagged_count": _suppress(hl_timeline["flagged_before_dx"]),
+                "total_rows": tp,
+                "flag_rate": f"{hl_timeline['flagged_before_dx'] / max(tp, 1) * 100:.2f}%",
+            }
+        )
+        rows.append(
+            {
+                "table": "CROSS_TABLE",
+                "check_type": "hl_timeline_over_365",
+                "flagged_count": _suppress(hl_timeline["flagged_over_365"]),
+                "total_rows": tp,
+                "flag_rate": f"{hl_timeline['flagged_over_365'] / max(tp, 1) * 100:.2f}%",
+            }
+        )
 
     if rows:
         df = pl.DataFrame(rows)
@@ -900,12 +825,16 @@ def _write_tumor_registry_csv(
             flagged = stats["flags"][flag_col]
             valid = total - flagged
             pct = flagged / max(total, 1) * 100
-            rows.append({
-                "table": tbl, "check": check, "field": field,
-                "valid_count": _suppress(valid),
-                "invalid_count": _suppress(flagged),
-                "invalid_pct": f"{pct:.2f}%",
-            })
+            rows.append(
+                {
+                    "table": tbl,
+                    "check": check,
+                    "field": field,
+                    "valid_count": _suppress(valid),
+                    "invalid_count": _suppress(flagged),
+                    "invalid_pct": f"{pct:.2f}%",
+                }
+            )
 
         # Treatment timing flags
         for fc, count in sorted(stats["flags"].items()):
@@ -913,12 +842,16 @@ def _write_tumor_registry_csv(
                 field = fc.replace("_val_before_dx", "")
                 valid = total - count
                 pct = count / max(total, 1) * 100
-                rows.append({
-                    "table": tbl, "check": "treatment_timing", "field": field,
-                    "valid_count": _suppress(valid),
-                    "invalid_count": _suppress(count),
-                    "invalid_pct": f"{pct:.2f}%",
-                })
+                rows.append(
+                    {
+                        "table": tbl,
+                        "check": "treatment_timing",
+                        "field": field,
+                        "valid_count": _suppress(valid),
+                        "invalid_count": _suppress(count),
+                        "invalid_pct": f"{pct:.2f}%",
+                    }
+                )
 
     if rows:
         df = pl.DataFrame(rows)
@@ -955,9 +888,7 @@ def _build_concordance_data(
     total_dx = diag.height
     total_flagged = 0
     if "DIAGNOSIS" in report_data:
-        total_flagged = report_data["DIAGNOSIS"]["flags"].get(
-            "DX_val_icd_concordance", 0
-        )
+        total_flagged = report_data["DIAGNOSIS"]["flags"].get("DX_val_icd_concordance", 0)
 
     result: dict = {
         "total_dx": total_dx,
@@ -967,11 +898,7 @@ def _build_concordance_data(
     is_icd10 = pl.col("DX").str.to_uppercase().str.contains(r"^[A-Z]")
 
     if partner_col in diag.columns:
-        is_pre_trans_icd10 = (
-            is_icd10
-            & pl.col("DX_DATE").is_not_null()
-            & (pl.col("DX_DATE") < ICD10_TRANSITION)
-        )
+        is_pre_trans_icd10 = is_icd10 & pl.col("DX_DATE").is_not_null() & (pl.col("DX_DATE") < ICD10_TRANSITION)
         partner_stats = (
             diag.with_columns(
                 is_icd10.alias("_is_icd10"),
@@ -990,29 +917,17 @@ def _build_concordance_data(
         # Get per-partner flagged counts
         flagged_col = "DX_val_icd_concordance"
         if flagged_col in diag.columns:
-            partner_flagged = (
-                diag.filter(pl.col(flagged_col) == 1)
-                .group_by(partner_col)
-                .agg(pl.len().alias("flagged"))
-            )
+            partner_flagged = diag.filter(pl.col(flagged_col) == 1).group_by(partner_col).agg(pl.len().alias("flagged"))
         else:
             # Re-read after validation — flags written to parquet
             try:
                 diag_updated = pl.read_parquet(diag_path)
                 if flagged_col in diag_updated.columns:
-                    partner_flagged = (
-                        diag_updated.filter(pl.col(flagged_col) == 1)
-                        .group_by(partner_col)
-                        .agg(pl.len().alias("flagged"))
-                    )
+                    partner_flagged = diag_updated.filter(pl.col(flagged_col) == 1).group_by(partner_col).agg(pl.len().alias("flagged"))
                 else:
-                    partner_flagged = pl.DataFrame(
-                        schema={partner_col: pl.String, "flagged": pl.UInt32}
-                    )
+                    partner_flagged = pl.DataFrame(schema={partner_col: pl.String, "flagged": pl.UInt32})
             except Exception:
-                partner_flagged = pl.DataFrame(
-                    schema={partner_col: pl.String, "flagged": pl.UInt32}
-                )
+                partner_flagged = pl.DataFrame(schema={partner_col: pl.String, "flagged": pl.UInt32})
 
         merged = partner_stats.join(partner_flagged, on=partner_col, how="left")
         merged = merged.with_columns(pl.col("flagged").fill_null(0))
@@ -1020,15 +935,17 @@ def _build_concordance_data(
         breakdown = []
         for row in merged.iter_rows(named=True):
             p = row[partner_col] if row[partner_col] is not None else "NULL"
-            breakdown.append({
-                "partner": p,
-                "total": row["total"],
-                "icd9": row["icd9"],
-                "icd10": row["icd10"],
-                "pre_transition_icd10": row["pre_transition_icd10"],
-                "flagged": row["flagged"],
-                "mapped": p in mapped_partners,
-            })
+            breakdown.append(
+                {
+                    "partner": p,
+                    "total": row["total"],
+                    "icd9": row["icd9"],
+                    "icd10": row["icd10"],
+                    "pre_transition_icd10": row["pre_transition_icd10"],
+                    "flagged": row["flagged"],
+                    "mapped": p in mapped_partners,
+                }
+            )
         result["partner_breakdown"] = breakdown
 
     return result
@@ -1045,15 +962,17 @@ def _write_icd_concordance_csv(
     rows = []
     for row in concordance_data["partner_breakdown"]:
         pre_icd10 = row.get("pre_transition_icd10", 0)
-        rows.append({
-            "partner": row["partner"],
-            "total_dx": row["total"],
-            "icd9_count": _suppress(row["icd9"]),
-            "icd10_count": _suppress(row["icd10"]),
-            "pre_transition_icd10": _suppress(pre_icd10),
-            "flagged_count": _suppress(row["flagged"]),
-            "is_mapped": row["mapped"],
-        })
+        rows.append(
+            {
+                "partner": row["partner"],
+                "total_dx": row["total"],
+                "icd9_count": _suppress(row["icd9"]),
+                "icd10_count": _suppress(row["icd10"]),
+                "pre_transition_icd10": _suppress(pre_icd10),
+                "flagged_count": _suppress(row["flagged"]),
+                "is_mapped": row["mapped"],
+            }
+        )
 
     if rows:
         df = pl.DataFrame(rows)
@@ -1091,7 +1010,7 @@ def main(config_path: Path | None = None) -> None:
     print(f"  Value sets loaded: {len(lookup)} (table, field) pairs")
 
     # ----- Load birth/death lookup -----
-    print(f"\n  Loading birth/death lookup for cross-table temporal checks...")
+    print("\n  Loading birth/death lookup for cross-table temporal checks...")
     birth_df, death_df = _load_birth_death_lookup(table_map)
     print(f"  Birth records: {birth_df.height:,}")
     print(f"  Death records: {death_df.height:,}")
@@ -1192,12 +1111,10 @@ def main(config_path: Path | None = None) -> None:
     print(f"\n{'─' * 60}")
     print("  ICD Concordance CSV")
     print(f"{'─' * 60}")
-    concordance_data = _build_concordance_data(
-        table_map, mapped_partners, report_data
-    )
+    concordance_data = _build_concordance_data(table_map, mapped_partners, report_data)
     _write_icd_concordance_csv(concordance_data, reports_dir)
     if concordance_data:
-        print(f"  Written: reports/icd_concordance.csv")
+        print("  Written: reports/icd_concordance.csv")
     else:
         print("  Skipped — no DIAGNOSIS data")
 
@@ -1256,7 +1173,7 @@ def main(config_path: Path | None = None) -> None:
     if hl_timeline["median_dx_to_tx"] is not None:
         print(f"  HL timeline median:    {hl_timeline['median_dx_to_tx']} days DX→TX")
     print(f"  Elapsed:               {overall_elapsed:.1f}s")
-    print(f"  Reports:")
+    print("  Reports:")
     print(f"    - {reports_dir / 'value_validation.md'}")
     print(f"    - {reports_dir / 'icd_concordance.csv'}")
     print(f"    - {reports_dir / 'temporal_issues.csv'}")
@@ -1273,9 +1190,10 @@ if __name__ == "__main__":
         raise
     except Exception as exc:
         print(f"\n{'=' * 60}")
-        print(f"  VALUE & TEMPORAL VALIDATION FAILED")
+        print("  VALUE & TEMPORAL VALIDATION FAILED")
         print(f"{'=' * 60}")
         print(f"  Error: {exc}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)

@@ -38,12 +38,7 @@ def add_partner_flags(
     if partner_col not in df.columns:
         return df
     for flag_name, partners in PARTNER_FLAGS.items():
-        df = df.with_columns(
-            pl.col(partner_col)
-            .is_in(partners)
-            .cast(pl.Int8)
-            .alias(flag_name)
-        )
+        df = df.with_columns(pl.col(partner_col).is_in(partners).cast(pl.Int8).alias(flag_name))
     return df
 
 
@@ -94,10 +89,7 @@ def flag_encounters_outside_enrollment(
         .group_by(enc_cols)
         .agg(pl.col("_covered").max().alias("_any_covered"))
         .with_columns(
-            pl.when(
-                (pl.col("_any_covered") == 0)
-                & pl.col("ADMIT_DATE").is_not_null()
-            )
+            pl.when((pl.col("_any_covered") == 0) & pl.col("ADMIT_DATE").is_not_null())
             .then(pl.lit(1))
             .otherwise(pl.lit(0))
             .cast(pl.Int8)
@@ -123,26 +115,11 @@ def flag_no_enrollment(
     Adds ``_con_no_enrollment`` (Int8): 1 for encounter rows belonging to
     patients entirely absent from the enrollment table.
     """
-    enr_ids = (
-        enrollment_df
-        .select(pl.col(PATID_COL).cast(pl.String))
-        .unique()
-    )
+    enr_ids = enrollment_df.select(pl.col(PATID_COL).cast(pl.String)).unique()
 
-    no_enr = (
-        encounter_df
-        .select(pl.col(PATID_COL).cast(pl.String))
-        .unique()
-        .join(enr_ids, on=PATID_COL, how="anti")
-    )
+    no_enr = encounter_df.select(pl.col(PATID_COL).cast(pl.String)).unique().join(enr_ids, on=PATID_COL, how="anti")
 
     no_enr_list = no_enr[PATID_COL].to_list()
 
-    encounter_df = encounter_df.with_columns(
-        pl.col(PATID_COL)
-        .cast(pl.String)
-        .is_in(no_enr_list)
-        .cast(pl.Int8)
-        .alias("_con_no_enrollment")
-    )
+    encounter_df = encounter_df.with_columns(pl.col(PATID_COL).cast(pl.String).is_in(no_enr_list).cast(pl.Int8).alias("_con_no_enrollment"))
     return encounter_df

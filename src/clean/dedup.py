@@ -64,10 +64,7 @@ CLEAN_FLAG_PREFIX: str = "_con_"
 
 def drop_existing_clean_flags(df: pl.DataFrame) -> pl.DataFrame:
     """Remove columns in CLEAN_FLAG_COLS or starting with CLEAN_FLAG_PREFIX."""
-    to_drop = [
-        c for c in df.columns
-        if c in CLEAN_FLAG_COLS or c.startswith(CLEAN_FLAG_PREFIX)
-    ]
+    to_drop = [c for c in df.columns if c in CLEAN_FLAG_COLS or c.startswith(CLEAN_FLAG_PREFIX)]
     if to_drop:
         df = df.drop(to_drop)
     return df
@@ -121,17 +118,9 @@ def check_demographic_consistency(table_map: dict[str, Path]) -> dict:
 
     total_patients = demo[id_col].n_unique()
 
-    multi_birth = (
-        demo.group_by(id_col)
-        .agg(pl.col("BIRTH_DATE").n_unique().alias("n"))
-        .filter(pl.col("n") > 1)
-    )
+    multi_birth = demo.group_by(id_col).agg(pl.col("BIRTH_DATE").n_unique().alias("n")).filter(pl.col("n") > 1)
 
-    multi_sex = (
-        demo.group_by(id_col)
-        .agg(pl.col("SEX").n_unique().alias("n"))
-        .filter(pl.col("n") > 1)
-    )
+    multi_sex = demo.group_by(id_col).agg(pl.col("SEX").n_unique().alias("n")).filter(pl.col("n") > 1)
 
     return {
         "multi_birth_date": multi_birth[id_col].to_list(),
@@ -173,20 +162,11 @@ def flag_events_outside_encounters(
         .with_columns(pl.col("ENCOUNTERID").cast(pl.String))
         .join(enc.lazy(), on="ENCOUNTERID", how="left")
         .with_columns(
-            pl.when(
-                pl.col("ENCOUNTERID").is_null()
-                | pl.col("ADMIT_DATE").is_null()
-                | pl.col(event_date_col).is_null()
-            )
+            pl.when(pl.col("ENCOUNTERID").is_null() | pl.col("ADMIT_DATE").is_null() | pl.col(event_date_col).is_null())
             .then(pl.lit(0))
             .when(
-                (pl.col(event_date_col)
-                 >= (pl.col("ADMIT_DATE") - pl.duration(days=1)))
-                & (
-                    pl.col("DISCHARGE_DATE").is_null()
-                    | (pl.col(event_date_col)
-                       <= (pl.col("DISCHARGE_DATE") + pl.duration(days=1)))
-                )
+                (pl.col(event_date_col) >= (pl.col("ADMIT_DATE") - pl.duration(days=1)))
+                & (pl.col("DISCHARGE_DATE").is_null() | (pl.col(event_date_col) <= (pl.col("DISCHARGE_DATE") + pl.duration(days=1))))
             )
             .then(pl.lit(0))
             .otherwise(pl.lit(1))
@@ -252,12 +232,8 @@ def check_death_consistency(table_map: dict[str, Path]) -> dict:
             tr = tr.with_columns(
                 pl.col(tr_date_col)
                 .str.to_date("%m/%d/%Y", strict=False)
-                .fill_null(
-                    pl.col(tr_date_col).str.to_date("%d%b%Y", strict=False)
-                )
-                .fill_null(
-                    pl.col(tr_date_col).str.to_date("%Y%m%d", strict=False)
-                )
+                .fill_null(pl.col(tr_date_col).str.to_date("%d%b%Y", strict=False))
+                .fill_null(pl.col(tr_date_col).str.to_date("%Y%m%d", strict=False))
                 .alias(tr_date_col)
             )
 
@@ -270,30 +246,25 @@ def check_death_consistency(table_map: dict[str, Path]) -> dict:
         if merged.is_empty():
             continue
 
-        merged = merged.filter(
-            pl.col("DEATH_DATE").is_not_null()
-            & pl.col("_tr_death_date").is_not_null()
-        )
+        merged = merged.filter(pl.col("DEATH_DATE").is_not_null() & pl.col("_tr_death_date").is_not_null())
 
         # Cast both sides to Date for comparison
         for c in ("DEATH_DATE", "_tr_death_date"):
             if merged.schema[c] != pl.Date:
-                merged = merged.with_columns(
-                    pl.col(c).cast(pl.Date, strict=False)
-                )
+                merged = merged.with_columns(pl.col(c).cast(pl.Date, strict=False))
 
-        mismatched = merged.filter(
-            pl.col("DEATH_DATE") != pl.col("_tr_death_date")
-        )
+        mismatched = merged.filter(pl.col("DEATH_DATE") != pl.col("_tr_death_date"))
 
         total_checked += merged.height
         total_mismatched += mismatched.height
-        details.append({
-            "tr_table": tr_name,
-            "tr_date_col": tr_date_col,
-            "patients_checked": merged.height,
-            "patients_mismatched": mismatched.height,
-        })
+        details.append(
+            {
+                "tr_table": tr_name,
+                "tr_date_col": tr_date_col,
+                "patients_checked": merged.height,
+                "patients_mismatched": mismatched.height,
+            }
+        )
 
     return {
         "patients_checked": total_checked,
@@ -313,10 +284,7 @@ def write_cleaned(df: pl.DataFrame, parquet_path: Path) -> dict:
     Counts columns matching CLEAN_FLAG_COLS or the CLEAN_FLAG_PREFIX and
     sums flagged rows for each.
     """
-    flag_cols = [
-        c for c in df.columns
-        if c in CLEAN_FLAG_COLS or c.startswith(CLEAN_FLAG_PREFIX)
-    ]
+    flag_cols = [c for c in df.columns if c in CLEAN_FLAG_COLS or c.startswith(CLEAN_FLAG_PREFIX)]
 
     stats: dict = {
         "path": str(parquet_path),

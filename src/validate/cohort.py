@@ -17,15 +17,11 @@ import polars as pl
 PATID_COL = "ID"
 
 ICD10_HL_CODES: set[str] = {
-    f"C81.{sub}{site}"
-    for sub in ("0", "1", "2", "3", "4", "7", "9")
-    for site in ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A")
+    f"C81.{sub}{site}" for sub in ("0", "1", "2", "3", "4", "7", "9") for site in ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A")
 }  # 77 codes: C81.00 through C81.9A (no C81.5x or C81.6x)
 
 ICD9_HL_CODES: set[str] = {
-    f"201.{sub}{site}"
-    for sub in ("0", "1", "2", "4", "5", "6", "7", "9")
-    for site in ("0", "1", "2", "3", "4", "5", "6", "7", "8")
+    f"201.{sub}{site}" for sub in ("0", "1", "2", "4", "5", "6", "7", "9") for site in ("0", "1", "2", "3", "4", "5", "6", "7", "8")
 }  # 72 codes: 201.00 through 201.98 (no 201.3x)
 
 ALL_HL_CODES: set[str] = ICD10_HL_CODES | ICD9_HL_CODES  # 149 codes
@@ -57,13 +53,7 @@ def detect_dx_format(diagnosis_path: Path, code_col: str = "DX") -> str:
     Returns 'dotted' or 'undotted'.
     Use code_col='CONDITION' for CONDITION table.
     """
-    sample = (
-        pl.scan_parquet(diagnosis_path)
-        .filter(pl.col(code_col).is_not_null())
-        .select(code_col)
-        .head(1000)
-        .collect()
-    )
+    sample = pl.scan_parquet(diagnosis_path).filter(pl.col(code_col).is_not_null()).select(code_col).head(1000).collect()
     if sample.is_empty():
         return "dotted"
 
@@ -85,34 +75,28 @@ def check_dx_type_mismatches(hl_dx: pl.DataFrame) -> pl.DataFrame:
     """
     if "DX_TYPE" not in hl_dx.columns:
         return pl.DataFrame(
-            schema={"ID": pl.String, "DX": pl.String, "DX_TYPE": pl.String,
-                    "expected_type": pl.String, "SOURCE": pl.String}
+            schema={"ID": pl.String, "DX": pl.String, "DX_TYPE": pl.String, "expected_type": pl.String, "SOURCE": pl.String}
         )
 
     has_dx_type = hl_dx.filter(pl.col("DX_TYPE").is_not_null() & (pl.col("DX_TYPE") != ""))
 
     if has_dx_type.is_empty():
         return pl.DataFrame(
-            schema={"ID": pl.String, "DX": pl.String, "DX_TYPE": pl.String,
-                    "expected_type": pl.String, "SOURCE": pl.String}
+            schema={"ID": pl.String, "DX": pl.String, "DX_TYPE": pl.String, "expected_type": pl.String, "SOURCE": pl.String}
         )
 
     dx_col = "DX"
     result = has_dx_type.with_columns(
-        pl.when(
-            pl.col(dx_col).str.to_uppercase().str.starts_with("C81")
-        ).then(pl.lit("10"))
-        .when(
-            pl.col(dx_col).str.starts_with("201")
-        ).then(pl.lit("09"))
+        pl.when(pl.col(dx_col).str.to_uppercase().str.starts_with("C81"))
+        .then(pl.lit("10"))
+        .when(pl.col(dx_col).str.starts_with("201"))
+        .then(pl.lit("09"))
         .otherwise(pl.lit("unknown"))
         .alias("expected_type")
     )
 
     mismatches = result.filter(
-        (pl.col("expected_type") != "unknown")
-        & (pl.col("DX_TYPE") != pl.col("expected_type"))
-        & (~pl.col("DX_TYPE").is_in(["NI", ""]))
+        (pl.col("expected_type") != "unknown") & (pl.col("DX_TYPE") != pl.col("expected_type")) & (~pl.col("DX_TYPE").is_in(["NI", ""]))
     )
 
     select_cols = [PATID_COL, "DX", "DX_TYPE", "expected_type"]
@@ -148,8 +132,8 @@ def verify_hl_cohort(
     # --- Stage 1: Extract HL DX records ---
     dx_format = detect_dx_format(diagnosis_path)
     code_set = ALL_HL_CODES if dx_format == "dotted" else ALL_HL_NORMALIZED
-    icd10_set = ICD10_HL_CODES if dx_format == "dotted" else ICD10_HL_NORMALIZED
-    icd9_set = ICD9_HL_CODES if dx_format == "dotted" else ICD9_HL_NORMALIZED
+    _icd10_set = ICD10_HL_CODES if dx_format == "dotted" else ICD10_HL_NORMALIZED
+    _icd9_set = ICD9_HL_CODES if dx_format == "dotted" else ICD9_HL_NORMALIZED
 
     dx_schema = pl.read_parquet_schema(diagnosis_path)
     select_cols = [PATID_COL, "DX", "DX_DATE"]
@@ -179,15 +163,11 @@ def verify_hl_cohort(
     unique_patients = hl_dx[PATID_COL].n_unique()
 
     null_dx_date_records = hl_dx.filter(pl.col("DX_DATE").is_null()).height
-    null_dx_date_patients = (
-        hl_dx.filter(pl.col("DX_DATE").is_null())[PATID_COL].n_unique()
-        if null_dx_date_records > 0 else 0
-    )
+    null_dx_date_patients = hl_dx.filter(pl.col("DX_DATE").is_null())[PATID_COL].n_unique() if null_dx_date_records > 0 else 0
 
     # --- Stage 2: Method A — 2+ distinct DX_DATEs ---
     method_a_df = (
-        hl_dx
-        .filter(pl.col("DX_DATE").is_not_null())
+        hl_dx.filter(pl.col("DX_DATE").is_not_null())
         .group_by(PATID_COL)
         .agg(pl.col("DX_DATE").n_unique().alias("distinct_dx_dates"))
         .filter(pl.col("distinct_dx_dates") >= 2)
@@ -202,23 +182,15 @@ def verify_hl_cohort(
         hl_with_enc = hl_dx.filter(pl.col("ENCOUNTERID").is_not_null())
         no_encounterid_match = hl_dx.filter(pl.col("ENCOUNTERID").is_null()).height
 
-        enc_lf = (
-            pl.scan_parquet(encounter_path)
-            .select(
-                pl.col("ENCOUNTERID").cast(pl.String),
-                "ADMIT_DATE",
-            )
+        enc_lf = pl.scan_parquet(encounter_path).select(
+            pl.col("ENCOUNTERID").cast(pl.String),
+            "ADMIT_DATE",
         )
 
-        joined = (
-            hl_with_enc.lazy()
-            .join(enc_lf, on="ENCOUNTERID", how="inner")
-            .collect()
-        )
+        joined = hl_with_enc.lazy().join(enc_lf, on="ENCOUNTERID", how="inner").collect()
 
         method_b_df = (
-            joined
-            .filter(pl.col("ADMIT_DATE").is_not_null())
+            joined.filter(pl.col("ADMIT_DATE").is_not_null())
             .group_by(PATID_COL)
             .agg(pl.col("ADMIT_DATE").n_unique().alias("distinct_admit_dates"))
             .filter(pl.col("distinct_admit_dates") >= 2)
@@ -238,10 +210,7 @@ def verify_hl_cohort(
     per_partner: dict[str, int] = {}
     if partner_col in hl_dx.columns:
         partner_df = (
-            hl_dx
-            .join(union_df, on=PATID_COL, how="inner")
-            .group_by(partner_col)
-            .agg(pl.col(PATID_COL).n_unique().alias("n_patients"))
+            hl_dx.join(union_df, on=PATID_COL, how="inner").group_by(partner_col).agg(pl.col(PATID_COL).n_unique().alias("n_patients"))
         )
         for row in partner_df.iter_rows(named=True):
             per_partner[row[partner_col] if row[partner_col] is not None else "NULL"] = row["n_patients"]
@@ -250,8 +219,7 @@ def verify_hl_cohort(
     year_breakdown: dict[str, int] = {}
     if total_hl_records > 0:
         patient_dates = (
-            hl_dx
-            .filter(pl.col("DX_DATE").is_not_null())
+            hl_dx.filter(pl.col("DX_DATE").is_not_null())
             .join(union_df, on=PATID_COL, how="inner")
             .group_by(PATID_COL)
             .agg(
@@ -261,8 +229,7 @@ def verify_hl_cohort(
         )
         if patient_dates.height > 0:
             yearly = (
-                patient_dates
-                .with_columns(pl.col("earliest_dx").dt.year().alias("year"))
+                patient_dates.with_columns(pl.col("earliest_dx").dt.year().alias("year"))
                 .group_by("year")
                 .agg(pl.len().alias("n"))
                 .sort("year")
@@ -286,8 +253,7 @@ def verify_hl_cohort(
     per_record = hl_dx.with_columns(icd_version_col.alias("icd_version"))
 
     icd_flags = (
-        per_record
-        .group_by(PATID_COL)
+        per_record.group_by(PATID_COL)
         .agg(
             pl.col("icd_version").n_unique().alias("version_count"),
             pl.col("icd_version").unique().alias("versions"),
@@ -308,16 +274,9 @@ def verify_hl_cohort(
     # ICD flags per partner
     icd_by_partner: dict[str, dict[str, int]] = {}
     if partner_col in hl_dx.columns:
-        patient_partner = (
-            hl_dx.select(PATID_COL, partner_col).unique()
-        )
+        patient_partner = hl_dx.select(PATID_COL, partner_col).unique()
         flagged = icd_flags.join(patient_partner, on=PATID_COL, how="left")
-        for row in (
-            flagged
-            .group_by(partner_col, "icd_flag")
-            .agg(pl.len().alias("n"))
-            .iter_rows(named=True)
-        ):
+        for row in flagged.group_by(partner_col, "icd_flag").agg(pl.len().alias("n")).iter_rows(named=True):
             p = row[partner_col] if row[partner_col] is not None else "NULL"
             icd_by_partner.setdefault(p, {})[row["icd_flag"]] = row["n"]
 
@@ -347,8 +306,7 @@ def verify_hl_cohort(
         "union_ids_df": union_df,
         "hl_dx": hl_dx,
         "ams_umi_caveat": (
-            "AMS and UMI mapped ICD-9→ICD-10 for all diagnoses; "
-            "their ICD10_ONLY counts may include originally ICD-9 patients"
+            "AMS and UMI mapped ICD-9→ICD-10 for all diagnoses; their ICD10_ONLY counts may include originally ICD-9 patients"
         ),
     }
 
@@ -372,21 +330,11 @@ def enrollment_crosscheck(
     """
     cohort = cohort_ids.select(pl.col(PATID_COL).cast(pl.String))
 
-    enr_lf = pl.scan_parquet(enrollment_path).with_columns(
-        pl.col(PATID_COL).cast(pl.String)
-    )
+    enr_lf = pl.scan_parquet(enrollment_path).with_columns(pl.col(PATID_COL).cast(pl.String))
 
-    with_enr = (
-        cohort.lazy()
-        .join(enr_lf.select(PATID_COL).unique(), on=PATID_COL, how="inner")
-        .collect()
-    )
+    with_enr = cohort.lazy().join(enr_lf.select(PATID_COL).unique(), on=PATID_COL, how="inner").collect()
 
-    without_enr = (
-        cohort.lazy()
-        .join(enr_lf.select(PATID_COL).unique(), on=PATID_COL, how="anti")
-        .collect()
-    )
+    without_enr = cohort.lazy().join(enr_lf.select(PATID_COL).unique(), on=PATID_COL, how="anti").collect()
 
     total_hl = cohort.height
     coverage_pct = round(with_enr.height / max(total_hl, 1) * 100, 2)
@@ -394,26 +342,12 @@ def enrollment_crosscheck(
     # Uncovered patients by partner (join with DEMOGRAPHIC for SOURCE)
     uncovered_by_partner: dict[str, int] = {}
     demo_schema = pl.read_parquet_schema(demographic_path)
-    demo_partner_col = partner_col if partner_col in demo_schema else (
-        "SITE" if "SITE" in demo_schema else None
-    )
+    demo_partner_col = partner_col if partner_col in demo_schema else ("SITE" if "SITE" in demo_schema else None)
 
     if demo_partner_col and without_enr.height > 0:
-        demo_lf = (
-            pl.scan_parquet(demographic_path)
-            .select(pl.col(PATID_COL).cast(pl.String), demo_partner_col)
-        )
-        uncov_with_partner = (
-            without_enr.lazy()
-            .join(demo_lf, on=PATID_COL, how="left")
-            .collect()
-        )
-        for row in (
-            uncov_with_partner
-            .group_by(demo_partner_col)
-            .agg(pl.len().alias("n"))
-            .iter_rows(named=True)
-        ):
+        demo_lf = pl.scan_parquet(demographic_path).select(pl.col(PATID_COL).cast(pl.String), demo_partner_col)
+        uncov_with_partner = without_enr.lazy().join(demo_lf, on=PATID_COL, how="left").collect()
+        for row in uncov_with_partner.group_by(demo_partner_col).agg(pl.len().alias("n")).iter_rows(named=True):
             p = row[demo_partner_col] if row[demo_partner_col] is not None else "NULL"
             uncovered_by_partner[p] = row["n"]
 
@@ -437,38 +371,21 @@ def enrollment_crosscheck(
         else:
             enr_partner = None
 
-        enr_data = (
-            pl.scan_parquet(enrollment_path)
-            .select(enr_select)
-            .collect()
-        )
+        enr_data = pl.scan_parquet(enrollment_path).select(enr_select).collect()
 
-        hl_enr = (
-            with_enr.lazy()
-            .join(enr_data.lazy(), on=PATID_COL, how="inner")
-            .collect()
-        )
+        hl_enr = with_enr.lazy().join(enr_data.lazy(), on=PATID_COL, how="inner").collect()
 
         if enr_partner and enr_partner in hl_enr.columns:
-            valid_enr = hl_enr.filter(
-                pl.col("ENR_START_DATE").is_not_null()
-                & pl.col("ENR_END_DATE").is_not_null()
-            )
+            valid_enr = hl_enr.filter(pl.col("ENR_START_DATE").is_not_null() & pl.col("ENR_END_DATE").is_not_null())
 
             if valid_enr.height > 0:
                 valid_enr = valid_enr.with_columns(
-                    (pl.col("ENR_END_DATE") - pl.col("ENR_START_DATE"))
-                    .dt.total_days()
-                    .alias("duration_days")
+                    (pl.col("ENR_END_DATE") - pl.col("ENR_START_DATE")).dt.total_days().alias("duration_days")
                 )
-                summary = (
-                    valid_enr
-                    .group_by(enr_partner)
-                    .agg(
-                        pl.col("ENR_START_DATE").min().alias("earliest_start"),
-                        pl.col("ENR_END_DATE").max().alias("latest_end"),
-                        pl.col("duration_days").median().alias("median_duration"),
-                    )
+                summary = valid_enr.group_by(enr_partner).agg(
+                    pl.col("ENR_START_DATE").min().alias("earliest_start"),
+                    pl.col("ENR_END_DATE").max().alias("latest_end"),
+                    pl.col("duration_days").median().alias("median_duration"),
                 )
                 for row in summary.iter_rows(named=True):
                     p = row[enr_partner] if row[enr_partner] is not None else "NULL"
@@ -513,51 +430,52 @@ def build_cohort_summary_df(
 
     base = base.join(
         method_a_df.with_columns(pl.lit(True).alias("in_method_a")),
-        on=PATID_COL, how="left",
+        on=PATID_COL,
+        how="left",
     ).with_columns(pl.col("in_method_a").fill_null(False))
 
     base = base.join(
         method_b_df.with_columns(pl.lit(True).alias("in_method_b")),
-        on=PATID_COL, how="left",
+        on=PATID_COL,
+        how="left",
     ).with_columns(pl.col("in_method_b").fill_null(False))
 
     base = base.join(icd_flags, on=PATID_COL, how="left")
 
     # Per-patient DX aggregates
-    patient_agg = (
-        hl_dx
-        .group_by(PATID_COL)
-        .agg(
-            pl.col("DX_DATE").min().alias("earliest_dx_date"),
-            pl.col("DX_DATE").max().alias("latest_dx_date"),
-            pl.len().alias("n_hl_dx_records"),
-        )
+    patient_agg = hl_dx.group_by(PATID_COL).agg(
+        pl.col("DX_DATE").min().alias("earliest_dx_date"),
+        pl.col("DX_DATE").max().alias("latest_dx_date"),
+        pl.len().alias("n_hl_dx_records"),
     )
 
     select_partner = []
     if partner_col in hl_dx.columns:
-        partner_per_patient = (
-            hl_dx
-            .group_by(PATID_COL)
-            .agg(pl.col(partner_col).first().alias("partner"))
-        )
+        partner_per_patient = hl_dx.group_by(PATID_COL).agg(pl.col(partner_col).first().alias("partner"))
         base = base.join(partner_per_patient, on=PATID_COL, how="left")
         select_partner = ["partner"]
 
     base = base.join(patient_agg, on=PATID_COL, how="left")
 
     if enrollment_result is not None:
-        enr_ids = set()
-        covered_count = enrollment_result.get("with_enrollment", 0)
-        total_hl = enrollment_result.get("total_hl", 0)
+        _enr_ids = set()
+        _covered_count = enrollment_result.get("with_enrollment", 0)
+        _total_hl = enrollment_result.get("total_hl", 0)
         base = base.with_columns(pl.lit(False).alias("has_enrollment"))
     else:
         base = base.with_columns(pl.lit(None).cast(pl.Boolean).alias("has_enrollment"))
 
-    out_cols = [
-        PATID_COL, "in_method_a", "in_method_b", "icd_flag",
-        "has_enrollment",
-    ] + select_partner + ["earliest_dx_date", "latest_dx_date", "n_hl_dx_records"]
+    out_cols = (
+        [
+            PATID_COL,
+            "in_method_a",
+            "in_method_b",
+            "icd_flag",
+            "has_enrollment",
+        ]
+        + select_partner
+        + ["earliest_dx_date", "latest_dx_date", "n_hl_dx_records"]
+    )
 
     available = [c for c in out_cols if c in base.columns]
     return base.select(available)

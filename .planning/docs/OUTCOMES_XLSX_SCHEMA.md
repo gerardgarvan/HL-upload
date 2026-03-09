@@ -1,6 +1,8 @@
-# Outcomes.xlsx Schema
+# Outcomes CSV Schema
 
 **Reference:** `src/clean/outcomes_flags.py` — `load_outcomes_code_lookup()`
+
+**Source file:** `Outcomes.csv` at project root (UTF-8, quoted fields for commas in Description).
 
 ## Columns
 
@@ -21,7 +23,7 @@ Column names are case-sensitive. Must match exactly as shown.
 
 ## load_outcomes_code_lookup expectations
 
-1. **Sheet name:** `"Outcomes"` (exact)
+1. **Source:** CSV file (no sheets; single table)
 2. **Code system mapping:**
    - `"CPT"` or `"HCPCS"` → `cpt_hcpcs` set
    - `"LOINC"` or any value containing `"LOINC"` → `loinc` set
@@ -35,6 +37,5 @@ Column names are case-sensitive. Must match exactly as shown.
 Layout changes will break `load_outcomes_code_lookup`:
 
 - Renaming columns (Modality, Code system, Code)
-- Changing sheet name
 - Changing Code system value spelling (e.g. `"LOINC"` vs `"loinc"`)
 - Changing Modality display names (must match `MODALITY_SLUG_MAP` exactly)

@@ -187,7 +187,6 @@ def validate_table_schema(
     """
     schema = pl.read_parquet_schema(parquet_path)
     actual_cols = list(schema.keys())
-    actual_set = set(actual_cols)
 
     result: dict = {
         "table": table_name,
@@ -206,9 +205,7 @@ def validate_table_schema(
             result["expected_col_count"] = expected_col_count
             if abs(diff) > 10:
                 result["status"] = "warn"
-                result["details"].append(
-                    f"Expected ~{expected_col_count} columns, got {len(actual_cols)} (diff={diff})"
-                )
+                result["details"].append(f"Expected ~{expected_col_count} columns, got {len(actual_cols)} (diff={diff})")
 
         actual_upper = {c.upper() for c in actual_cols}
         missing_keys = TUMOR_REGISTRY_KEY_VARS - actual_upper
@@ -216,9 +213,7 @@ def validate_table_schema(
         result["matched"] = len(present_keys)
         if missing_keys:
             result["status"] = "warn"
-            result["details"].append(
-                f"Missing key variables: {sorted(missing_keys)}"
-            )
+            result["details"].append(f"Missing key variables: {sorted(missing_keys)}")
         return result
 
     if expected_cols:
@@ -280,16 +275,8 @@ def check_patid_integrity(
 
     Casts ID to String on both sides to prevent type mismatch errors.
     """
-    demo_ids = (
-        pl.scan_parquet(demographic_path)
-        .select(pl.col(PATID_COL).cast(pl.String))
-        .unique()
-    )
-    child_ids = (
-        pl.scan_parquet(child_path)
-        .select(pl.col(PATID_COL).cast(pl.String))
-        .unique()
-    )
+    demo_ids = pl.scan_parquet(demographic_path).select(pl.col(PATID_COL).cast(pl.String)).unique()
+    child_ids = pl.scan_parquet(child_path).select(pl.col(PATID_COL).cast(pl.String)).unique()
 
     total_unique = child_ids.collect().height
     orphans = child_ids.join(demo_ids, on=PATID_COL, how="anti").collect()
@@ -332,23 +319,14 @@ def check_encounterid_integrity(
             "skip_partner": skip_partner,
         }
 
-    enc_ids = (
-        pl.scan_parquet(encounter_path)
-        .select(pl.col("ENCOUNTERID").cast(pl.String))
-        .unique()
-    )
+    enc_ids = pl.scan_parquet(encounter_path).select(pl.col("ENCOUNTERID").cast(pl.String)).unique()
 
     child_lf = pl.scan_parquet(child_path)
 
     if skip_partner and partner_col in child_schema:
         child_lf = child_lf.filter(pl.col(partner_col) != skip_partner)
 
-    child_enc = (
-        child_lf
-        .select(pl.col("ENCOUNTERID").cast(pl.String))
-        .filter(pl.col("ENCOUNTERID").is_not_null())
-        .unique()
-    )
+    child_enc = child_lf.select(pl.col("ENCOUNTERID").cast(pl.String)).filter(pl.col("ENCOUNTERID").is_not_null()).unique()
 
     total = child_enc.collect().height
     orphans = child_enc.join(enc_ids, on="ENCOUNTERID", how="anti").collect()
@@ -388,25 +366,15 @@ def completeness_by_partner(
     elif "SITE" in schema_names:
         actual_partner_col = "SITE"
 
-    analysis_cols = [
-        c for c in schema_names
-        if c != actual_partner_col
-    ]
+    analysis_cols = [c for c in schema_names if c != actual_partner_col]
 
     if not analysis_cols:
         return pl.DataFrame()
 
-    completeness_exprs = [
-        (1 - pl.col(c).null_count() / pl.len()).alias(c)
-        for c in analysis_cols
-    ]
+    completeness_exprs = [(1 - pl.col(c).null_count() / pl.len()).alias(c) for c in analysis_cols]
 
     if actual_partner_col:
-        result = (
-            lf.group_by(actual_partner_col)
-            .agg([pl.len().alias("row_count")] + completeness_exprs)
-            .collect()
-        )
+        result = lf.group_by(actual_partner_col).agg([pl.len().alias("row_count")] + completeness_exprs).collect()
 
         long = result.unpivot(
             index=[actual_partner_col, "row_count"],
@@ -419,13 +387,7 @@ def completeness_by_partner(
 
         return long
     else:
-        result = (
-            lf.select(
-                [pl.lit("ALL").alias("_partner"), pl.len().alias("row_count")]
-                + completeness_exprs
-            )
-            .collect()
-        )
+        result = lf.select([pl.lit("ALL").alias("_partner"), pl.len().alias("row_count")] + completeness_exprs).collect()
 
         long = result.unpivot(
             index=["_partner", "row_count"],
@@ -455,47 +417,45 @@ def classify_missing_values(
     lf = pl.scan_parquet(parquet_path)
     schema = lf.collect_schema()
 
-    string_cols = [
-        name for name, dtype in schema.items()
-        if dtype == pl.String or dtype == pl.Utf8
-    ]
+    string_cols = [name for name, dtype in schema.items() if dtype == pl.String or dtype == pl.Utf8]
 
     if not string_cols:
-        return pl.DataFrame(schema={
-            "table": pl.String,
-            "column": pl.String,
-            "ni_count": pl.UInt32,
-            "un_count": pl.UInt32,
-            "ot_count": pl.UInt32,
-            "empty_count": pl.UInt32,
-            "null_count": pl.UInt32,
-            "total_rows": pl.UInt32,
-        })
+        return pl.DataFrame(
+            schema={
+                "table": pl.String,
+                "column": pl.String,
+                "ni_count": pl.UInt32,
+                "un_count": pl.UInt32,
+                "ot_count": pl.UInt32,
+                "empty_count": pl.UInt32,
+                "null_count": pl.UInt32,
+                "total_rows": pl.UInt32,
+            }
+        )
 
     rows: list[dict] = []
     total_rows = lf.select(pl.len()).collect().item()
 
     for col in string_cols:
-        counts = (
-            lf.select(
-                pl.col(col).eq("NI").sum().alias("ni_count"),
-                pl.col(col).eq("UN").sum().alias("un_count"),
-                pl.col(col).eq("OT").sum().alias("ot_count"),
-                pl.col(col).eq("").sum().alias("empty_count"),
-                pl.col(col).is_null().sum().alias("null_count"),
-            )
-            .collect()
+        counts = lf.select(
+            pl.col(col).eq("NI").sum().alias("ni_count"),
+            pl.col(col).eq("UN").sum().alias("un_count"),
+            pl.col(col).eq("OT").sum().alias("ot_count"),
+            pl.col(col).eq("").sum().alias("empty_count"),
+            pl.col(col).is_null().sum().alias("null_count"),
+        ).collect()
+        rows.append(
+            {
+                "table": table_name,
+                "column": col,
+                "ni_count": counts["ni_count"][0],
+                "un_count": counts["un_count"][0],
+                "ot_count": counts["ot_count"][0],
+                "empty_count": counts["empty_count"][0],
+                "null_count": counts["null_count"][0],
+                "total_rows": total_rows,
+            }
         )
-        rows.append({
-            "table": table_name,
-            "column": col,
-            "ni_count": counts["ni_count"][0],
-            "un_count": counts["un_count"][0],
-            "ot_count": counts["ot_count"][0],
-            "empty_count": counts["empty_count"][0],
-            "null_count": counts["null_count"][0],
-            "total_rows": total_rows,
-        })
 
     return pl.DataFrame(rows)
 

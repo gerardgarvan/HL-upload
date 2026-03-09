@@ -67,9 +67,7 @@ def main(config_path: Path | None = None) -> None:
     nulls_before = df[date_col].null_count()
     print(f"  Before: dtype={dtype_before}, nulls={nulls_before}")
 
-    df = df.with_columns(
-        pl.col(date_col).str.to_date("%d%b%Y", strict=False)
-    )
+    df = df.with_columns(pl.col(date_col).str.to_date("%d%b%Y", strict=False))
 
     dtype_after = df[date_col].dtype
     nulls_after = df[date_col].null_count()
@@ -88,12 +86,8 @@ def main(config_path: Path | None = None) -> None:
     # Step 7: Read back and verify
     print("\n--- Step 7: Parquet read-back verify ---")
     df2 = pl.read_parquet(parquet_path)
-    assert df2.shape == original_shape, (
-        f"Shape mismatch: wrote {original_shape}, read {df2.shape}"
-    )
-    assert df2[date_col].dtype == pl.Date, (
-        f"Date type lost: expected pl.Date, got {df2[date_col].dtype}"
-    )
+    assert df2.shape == original_shape, f"Shape mismatch: wrote {original_shape}, read {df2.shape}"
+    assert df2[date_col].dtype == pl.Date, f"Date type lost: expected pl.Date, got {df2[date_col].dtype}"
     print(f"  [OK] Shape matches: {df2.shape[0]:,} rows x {df2.shape[1]} cols")
     print(f"  [OK] {date_col} dtype preserved: {df2[date_col].dtype}")
 
@@ -103,13 +97,9 @@ def main(config_path: Path | None = None) -> None:
 
     con = duckdb.connect()
     parquet_str = str(parquet_path).replace("\\", "/")
-    result = con.sql(
-        f"SELECT COUNT(*) FROM read_parquet('{parquet_str}')"
-    ).fetchone()
+    result = con.sql(f"SELECT COUNT(*) FROM read_parquet('{parquet_str}')").fetchone()
     duckdb_count = result[0]
-    assert duckdb_count == original_shape[0], (
-        f"DuckDB count mismatch: expected {original_shape[0]}, got {duckdb_count}"
-    )
+    assert duckdb_count == original_shape[0], f"DuckDB count mismatch: expected {original_shape[0]}, got {duckdb_count}"
     print(f"  [OK] DuckDB reads {duckdb_count:,} rows from Parquet")
     con.close()
 
@@ -135,9 +125,10 @@ if __name__ == "__main__":
         sys.exit(0)
     except Exception as exc:
         print(f"\n{'=' * 60}")
-        print(f"=== SMOKE TEST FAILED ===")
+        print("=== SMOKE TEST FAILED ===")
         print(f"{'=' * 60}")
         print(f"Error: {exc}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)

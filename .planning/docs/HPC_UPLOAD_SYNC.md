@@ -17,7 +17,7 @@ From project root (e.g. `Data loading and cleaing/`):
 ```bash
 # Sync scripts, src, config (exclude parquet, logs, pycache)
 rsync -av --exclude='parquet' --exclude='logs' --exclude='__pycache__' \
-  scripts/ src/ config/ datastructure.txt valuesets.csv Outcomes.xlsx \
+  scripts/ src/ config/ datastructure.txt valuesets.csv Outcomes.csv \
   hpc-upload/
 ```
 
@@ -27,7 +27,7 @@ Or copy specific dirs:
 cp -r scripts hpc-upload/
 cp -r src hpc-upload/
 cp -r config hpc-upload/
-cp datastructure.txt valuesets.csv Outcomes.xlsx hpc-upload/ 2>/dev/null || true
+cp datastructure.txt valuesets.csv Outcomes.csv hpc-upload/ 2>/dev/null || true
 ```
 
 ## Before HPC Submission
@@ -45,7 +45,7 @@ cp datastructure.txt valuesets.csv Outcomes.xlsx hpc-upload/ 2>/dev/null || true
 | config/ | hpc-upload/config/ | paths.toml |
 | datastructure.txt | hpc-upload/ | Table manifest |
 | valuesets.csv | hpc-upload/ | Value sets |
-| Outcomes.xlsx | hpc-upload/ | Phase 7 modality codes |
+| Outcomes.csv | hpc-upload/ | Phase 7 modality codes |
 | environment.yml | hpc-upload/ | Optional, if deps changed |
 
 ## Do Not Overwrite

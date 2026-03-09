@@ -50,7 +50,8 @@ def main(config_path: Path | None = None):
         if "HISTOLOGY" in cols:
             h = df.select("HISTOLOGY").drop_nulls().collect()
             print(f"  HISTOLOGY non-null: {h.height}")
-            hl_count = df.filter(pl.col("HISTOLOGY").cast(pl.Float64, strict=False).cast(pl.Int64, strict=False).is_in(list(HL_HISTOLOGY))).collect().height
+            hl_hist = pl.col("HISTOLOGY").cast(pl.Float64, strict=False).cast(pl.Int64, strict=False)
+            hl_count = df.filter(hl_hist.is_in(list(HL_HISTOLOGY))).collect().height
             print(f"  HISTOLOGY in 9650-9667 (HL): {hl_count}")
 
         if PATID_COL in cols:

@@ -1,7 +1,5 @@
 """Unit tests for flag_small_cell (small-cell suppression for markdown)."""
 
-import pytest
-
 from src.validate.structural import flag_small_cell
 
 

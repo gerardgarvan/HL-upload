@@ -1,11 +1,11 @@
 # Project State
 
 ## Current Position
-- **Current Phase:** 10
-- **Current Plan:** 10-01-PLAN.md
-- **Status:** Phase 10 complete (CI, pre-commit, hardening)
-- **Last session:** 2026-03-09
-- **Stopped at:** Completed 10-01-PLAN.md
+- **Current Phase:** 11
+- **Current Plan:** 11-01-PLAN.md
+- **Status:** Phase 11 complete (remove xlsx, use CSV)
+- **Last session:** 2026-02-27
+- **Stopped at:** Completed 11-01-PLAN.md
 
 ## Progress
 
@@ -20,7 +20,8 @@ Phase 7:  ████████████████████ 1/1 plans
 Phase 8:  ████████████████████ 1/1 plans (100%) — Concerns Tiers 1–2
 Phase 9:  ████████████████████ 1/1 plans (100%) — Concerns Tiers 3–5
 Phase 10: ████████████████████ 1/1 plans (100%) — CI, pre-commit, hardening
-Overall:  Phases 1–10 plans complete
+Phase 11: ████████████████████ 1/1 plans (100%) — Remove xlsx, use CSV
+Overall:  Phases 1–11 plans complete
 ```
 
 ## Decisions

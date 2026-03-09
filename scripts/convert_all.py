@@ -59,11 +59,7 @@ def main(config_path: Path | None = None) -> None:
         print(f"  File: {filename}")
         print(f"{'=' * 60}")
 
-        if (
-            parquet_path.exists()
-            and csv_path.exists()
-            and csv_path.stat().st_mtime <= parquet_path.stat().st_mtime
-        ):
+        if parquet_path.exists() and csv_path.exists() and csv_path.stat().st_mtime <= parquet_path.stat().st_mtime:
             parquet_df = pl.read_parquet(parquet_path)
             record = {
                 "table_name": table_name,
@@ -86,8 +82,9 @@ def main(config_path: Path | None = None) -> None:
             except Exception as exc:
                 print(f"\n  [FATAL] {table_name} failed: {exc}")
                 import traceback
+
                 traceback.print_exc()
-                print(f"\n  Stopping — cannot continue after table failure.")
+                print("\n  Stopping — cannot continue after table failure.")
                 sys.exit(1)
 
         inventory_records.append(record)
@@ -122,9 +119,10 @@ if __name__ == "__main__":
         raise
     except Exception as exc:
         print(f"\n{'=' * 60}")
-        print(f"  CONVERSION FAILED")
+        print("  CONVERSION FAILED")
         print(f"{'=' * 60}")
         print(f"  Error: {exc}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)

@@ -24,7 +24,6 @@ dependencies:
   - pip:
     - jinja2>=3.1
     - tabulate
-    - openpyxl
     - pytest
     - ruff
     - pre-commit

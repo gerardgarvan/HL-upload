@@ -21,25 +21,22 @@ import polars as pl
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.clean.outcomes_flags import add_modality_flags
 from src.load.config import load_config
 from src.load.schema import parse_datastructure, resolve_table_name
-from src.clean.outcomes_flags import add_modality_flags
 from src.report.quality_report import (
-    build_patient_level_derived,
     aggregate_dq_metrics,
+    build_patient_level_derived,
     generate_cleaning_decisions_content,
 )
 from src.validate.structural import flag_small_cell
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _build_table_map(
-    table_filenames: list[str], parquet_dir: Path
-) -> dict[str, Path]:
+def _build_table_map(table_filenames: list[str], parquet_dir: Path) -> dict[str, Path]:
     """Build mapping from table_name -> parquet_path."""
     table_map: dict[str, Path] = {}
     for filename in table_filenames:
@@ -89,16 +86,16 @@ def main(config_path: Path | None = None) -> None:
     print(f"  Copied {copied} tables")
 
     # Build patient_level.parquet
-    print(f"\n--- Build patient_level.parquet ---")
+    print("\n--- Build patient_level.parquet ---")
     patient_df = build_patient_level_derived(table_map)
 
-    # Add modality flags from Outcomes.xlsx (Phase 7)
-    outcomes_path = PROJECT_ROOT / "Outcomes.xlsx"
+    # Add modality flags from Outcomes.csv (Phase 7)
+    outcomes_path = PROJECT_ROOT / "Outcomes.csv"
     if outcomes_path.exists():
         patient_df = add_modality_flags(patient_df, table_map, outcomes_path)
         print(f"  Modality flags added from {outcomes_path.name}")
     else:
-        print(f"  SKIP modality flags (Outcomes.xlsx not found)")
+        print("  SKIP modality flags (Outcomes.csv not found)")
 
     patient_path = derived_dir / "patient_level.parquet"
     patient_df.write_parquet(patient_path, compression="snappy")
@@ -106,7 +103,7 @@ def main(config_path: Path | None = None) -> None:
     print(f"  Written: {patient_path}")
 
     # Generate reports
-    print(f"\n--- Generate reports ---")
+    print("\n--- Generate reports ---")
     dq = aggregate_dq_metrics(table_map, reports_dir)
 
     # DATA_QUALITY_REPORT.md

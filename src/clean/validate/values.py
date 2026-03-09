@@ -11,8 +11,6 @@ from pathlib import Path
 
 import polars as pl
 
-from src.validate.structural import PATID_COL, SMALL_CELL_THRESHOLD
-
 # ---------------------------------------------------------------------------
 # Constants — vital sign plausibility ranges
 # ---------------------------------------------------------------------------
@@ -30,26 +28,26 @@ VITAL_RANGES: dict[str, tuple[float, float]] = {
 # ---------------------------------------------------------------------------
 
 HL_LAB_RANGES: dict[str, dict] = {
-    "6690-2":  {"name": "WBC",              "min": 0, "max": 500,   "unit": "10*3/uL"},
-    "26464-8": {"name": "WBC alt",          "min": 0, "max": 500,   "unit": "10*3/uL"},
-    "718-7":   {"name": "Hemoglobin",       "min": 0, "max": 30,    "unit": "g/dL"},
-    "30313-1": {"name": "Hgb alt",          "min": 0, "max": 30,    "unit": "g/dL"},
-    "777-3":   {"name": "Platelets",        "min": 0, "max": 5000,  "unit": "10*3/uL"},
-    "26515-7": {"name": "Plt alt",          "min": 0, "max": 5000,  "unit": "10*3/uL"},
-    "4544-3":  {"name": "Hematocrit",       "min": 0, "max": 75,    "unit": "%"},
-    "787-2":   {"name": "MCV",              "min": 0, "max": 200,   "unit": "fL"},
-    "30428-7": {"name": "MCV alt",          "min": 0, "max": 200,   "unit": "fL"},
-    "1742-6":  {"name": "ALT",              "min": 0, "max": 50000, "unit": "U/L"},
-    "1920-8":  {"name": "AST",              "min": 0, "max": 50000, "unit": "U/L"},
-    "6768-6":  {"name": "ALP",              "min": 0, "max": 10000, "unit": "U/L"},
-    "1975-2":  {"name": "Bilirubin total",  "min": 0, "max": 100,   "unit": "mg/dL"},
-    "1751-7":  {"name": "Albumin",          "min": 0, "max": 15,    "unit": "g/dL"},
-    "1968-7":  {"name": "Direct bilirubin", "min": 0, "max": 100,   "unit": "mg/dL"},
-    "2324-2":  {"name": "GGT",              "min": 0, "max": 10000, "unit": "U/L"},
-    "11580-8": {"name": "TSH",              "min": 0, "max": 500,   "unit": "mIU/L"},
-    "3016-3":  {"name": "TSH alt",          "min": 0, "max": 500,   "unit": "mIU/L"},
-    "4537-7":  {"name": "ESR",              "min": 0, "max": 200,   "unit": "mm/hr"},
-    "1988-5":  {"name": "CRP",              "min": 0, "max": 500,   "unit": "mg/L"},
+    "6690-2": {"name": "WBC", "min": 0, "max": 500, "unit": "10*3/uL"},
+    "26464-8": {"name": "WBC alt", "min": 0, "max": 500, "unit": "10*3/uL"},
+    "718-7": {"name": "Hemoglobin", "min": 0, "max": 30, "unit": "g/dL"},
+    "30313-1": {"name": "Hgb alt", "min": 0, "max": 30, "unit": "g/dL"},
+    "777-3": {"name": "Platelets", "min": 0, "max": 5000, "unit": "10*3/uL"},
+    "26515-7": {"name": "Plt alt", "min": 0, "max": 5000, "unit": "10*3/uL"},
+    "4544-3": {"name": "Hematocrit", "min": 0, "max": 75, "unit": "%"},
+    "787-2": {"name": "MCV", "min": 0, "max": 200, "unit": "fL"},
+    "30428-7": {"name": "MCV alt", "min": 0, "max": 200, "unit": "fL"},
+    "1742-6": {"name": "ALT", "min": 0, "max": 50000, "unit": "U/L"},
+    "1920-8": {"name": "AST", "min": 0, "max": 50000, "unit": "U/L"},
+    "6768-6": {"name": "ALP", "min": 0, "max": 10000, "unit": "U/L"},
+    "1975-2": {"name": "Bilirubin total", "min": 0, "max": 100, "unit": "mg/dL"},
+    "1751-7": {"name": "Albumin", "min": 0, "max": 15, "unit": "g/dL"},
+    "1968-7": {"name": "Direct bilirubin", "min": 0, "max": 100, "unit": "mg/dL"},
+    "2324-2": {"name": "GGT", "min": 0, "max": 10000, "unit": "U/L"},
+    "11580-8": {"name": "TSH", "min": 0, "max": 500, "unit": "mIU/L"},
+    "3016-3": {"name": "TSH alt", "min": 0, "max": 500, "unit": "mIU/L"},
+    "4537-7": {"name": "ESR", "min": 0, "max": 200, "unit": "mm/hr"},
+    "1988-5": {"name": "CRP", "min": 0, "max": 500, "unit": "mg/L"},
 }
 
 # ---------------------------------------------------------------------------
@@ -73,11 +71,21 @@ ALWAYS_VALID_CODES: set[str] = {"NI", "UN", "OT"}
 HL_HISTOLOGY_CODES: set[int] = set(range(9650, 9668))
 
 VALID_AJCC_STAGES: set[str] = {
-    "I", "IA", "IB",
-    "II", "IIA", "IIB",
-    "III", "IIIA", "IIIB",
-    "IV", "IVA", "IVB",
-    "UNK", "88", "99",
+    "I",
+    "IA",
+    "IB",
+    "II",
+    "IIA",
+    "IIB",
+    "III",
+    "IIIA",
+    "IIIB",
+    "IV",
+    "IVA",
+    "IVB",
+    "UNK",
+    "88",
+    "99",
 }
 
 _B_SYMPTOM_VALID: set[str] = {"A", "B", "1", "2", "9", "8", ""}
@@ -139,11 +147,7 @@ def validate_coded_fields(
         valid = valid_set | ALWAYS_VALID_CODES
         flag_col = f"{col}_val_code"
         df = df.with_columns(
-            pl.when(
-                pl.col(col).is_null()
-                | (pl.col(col) == "")
-                | pl.col(col).is_in(valid)
-            )
+            pl.when(pl.col(col).is_null() | (pl.col(col) == "") | pl.col(col).is_in(valid))
             .then(pl.lit(0))
             .otherwise(pl.lit(1))
             .cast(pl.Int8)
@@ -165,10 +169,7 @@ def validate_vital_plausibility(df: pl.DataFrame) -> pl.DataFrame:
         df = _ensure_float(df, col)
         flag_col = f"{col}_val_range"
         df = df.with_columns(
-            pl.when(
-                pl.col(col).is_null()
-                | (pl.col(col).ge(lo) & pl.col(col).le(hi))
-            )
+            pl.when(pl.col(col).is_null() | (pl.col(col).ge(lo) & pl.col(col).le(hi)))
             .then(pl.lit(0))
             .otherwise(pl.lit(1))
             .cast(pl.Int8)
@@ -196,13 +197,7 @@ def validate_lab_plausibility(df: pl.DataFrame) -> pl.DataFrame:
     # Flag missing RESULT_UNIT on rows with a numeric result
     if "RESULT_UNIT" in df.columns:
         df = df.with_columns(
-            pl.when(
-                pl.col("RESULT_NUM").is_not_null()
-                & (
-                    pl.col("RESULT_UNIT").is_null()
-                    | (pl.col("RESULT_UNIT") == "")
-                )
-            )
+            pl.when(pl.col("RESULT_NUM").is_not_null() & (pl.col("RESULT_UNIT").is_null() | (pl.col("RESULT_UNIT") == "")))
             .then(pl.lit(1))
             .otherwise(pl.lit(0))
             .cast(pl.Int8)
@@ -216,10 +211,7 @@ def validate_lab_plausibility(df: pl.DataFrame) -> pl.DataFrame:
             pl.when(
                 pl.col("LAB_LOINC").eq(loinc)
                 & pl.col("RESULT_NUM").is_not_null()
-                & (
-                    pl.col("RESULT_NUM").lt(info["min"])
-                    | pl.col("RESULT_NUM").gt(info["max"])
-                )
+                & (pl.col("RESULT_NUM").lt(info["min"]) | pl.col("RESULT_NUM").gt(info["max"]))
             )
             .then(pl.lit(1).cast(pl.Int8))
             .otherwise(range_flag)
@@ -247,25 +239,20 @@ def detect_mapped_partners(
     if partner_col not in df.columns or "DX_DATE" not in df.columns:
         return known
 
-    pre = df.filter(
-        pl.col("DX_DATE").is_not_null() & (pl.col("DX_DATE") < ICD10_TRANSITION)
-    )
+    pre = df.filter(pl.col("DX_DATE").is_not_null() & (pl.col("DX_DATE") < ICD10_TRANSITION))
     if pre.is_empty():
         return known
 
     is_icd10 = pl.col("DX").str.to_uppercase().str.contains(r"^[A-Z]")
 
     partner_stats = (
-        pre
-        .with_columns(is_icd10.alias("_is_icd10"))
+        pre.with_columns(is_icd10.alias("_is_icd10"))
         .group_by(partner_col)
         .agg(
             pl.len().alias("total"),
             pl.col("_is_icd10").sum().alias("icd10_count"),
         )
-        .with_columns(
-            (pl.col("icd10_count") / pl.col("total")).alias("icd10_pct")
-        )
+        .with_columns((pl.col("icd10_count") / pl.col("total")).alias("icd10_pct"))
         .filter(pl.col("icd10_pct") > 0.95)
     )
 
@@ -299,17 +286,17 @@ def validate_icd_concordance(
 
     in_grace = pl.col("DX_DATE").ge(GRACE_START) & pl.col("DX_DATE").lt(GRACE_END)
 
-    is_mapped = (
-        pl.col(partner_col).is_in(mapped_partners)
-        if partner_col in df.columns and mapped_partners
-        else pl.lit(False)
-    )
+    is_mapped = pl.col(partner_col).is_in(mapped_partners) if partner_col in df.columns and mapped_partners else pl.lit(False)
 
     flag = (
-        pl.when(pl.col("DX_DATE").is_null()).then(pl.lit(0))
-        .when(in_grace).then(pl.lit(0))
-        .when(~is_icd10 & pl.col("DX_DATE").ge(GRACE_END)).then(pl.lit(1))
-        .when(is_icd10 & pl.col("DX_DATE").lt(GRACE_START) & ~is_mapped).then(pl.lit(1))
+        pl.when(pl.col("DX_DATE").is_null())
+        .then(pl.lit(0))
+        .when(in_grace)
+        .then(pl.lit(0))
+        .when(~is_icd10 & pl.col("DX_DATE").ge(GRACE_END))
+        .then(pl.lit(1))
+        .when(is_icd10 & pl.col("DX_DATE").lt(GRACE_START) & ~is_mapped)
+        .then(pl.lit(1))
         .otherwise(pl.lit(0))
     )
 
@@ -333,9 +320,7 @@ def validate_temporal_encounter(df: pl.DataFrame) -> pl.DataFrame:
 
     df = df.with_columns(
         pl.when(
-            pl.col("ADMIT_DATE").is_not_null()
-            & pl.col("DISCHARGE_DATE").is_not_null()
-            & (pl.col("DISCHARGE_DATE") < pl.col("ADMIT_DATE"))
+            pl.col("ADMIT_DATE").is_not_null() & pl.col("DISCHARGE_DATE").is_not_null() & (pl.col("DISCHARGE_DATE") < pl.col("ADMIT_DATE"))
         )
         .then(pl.lit(1))
         .otherwise(pl.lit(0))
@@ -345,9 +330,7 @@ def validate_temporal_encounter(df: pl.DataFrame) -> pl.DataFrame:
 
     df = df.with_columns(
         pl.when(
-            pl.col("ADMIT_DATE").is_not_null()
-            & pl.col("DISCHARGE_DATE").is_not_null()
-            & (pl.col("ADMIT_DATE") == pl.col("DISCHARGE_DATE"))
+            pl.col("ADMIT_DATE").is_not_null() & pl.col("DISCHARGE_DATE").is_not_null() & (pl.col("ADMIT_DATE") == pl.col("DISCHARGE_DATE"))
         )
         .then(pl.lit(1))
         .otherwise(pl.lit(0))
@@ -375,9 +358,7 @@ def validate_future_dates(
         dtype = df.schema[col]
         if dtype == pl.Date:
             df = df.with_columns(
-                pl.when(
-                    pl.col(col).is_not_null() & (pl.col(col) > cutoff)
-                )
+                pl.when(pl.col(col).is_not_null() & (pl.col(col) > cutoff))
                 .then(pl.lit(1))
                 .otherwise(pl.lit(0))
                 .cast(pl.Int8)
@@ -385,10 +366,7 @@ def validate_future_dates(
             )
         elif dtype == pl.Datetime or (isinstance(dtype, pl.Datetime)):
             df = df.with_columns(
-                pl.when(
-                    pl.col(col).is_not_null()
-                    & (pl.col(col).cast(pl.Date) > cutoff)
-                )
+                pl.when(pl.col(col).is_not_null() & (pl.col(col).cast(pl.Date) > cutoff))
                 .then(pl.lit(1))
                 .otherwise(pl.lit(0))
                 .cast(pl.Int8)
@@ -436,14 +414,9 @@ def validate_tumor_registry(df: pl.DataFrame) -> pl.DataFrame:
     # --- Histology ---
     if "HISTOLOGY" in df.columns:
         df = _ensure_float(df, "HISTOLOGY")
+        df = df.with_columns(pl.col("HISTOLOGY").cast(pl.Int64, strict=False).alias("_hist_int"))
         df = df.with_columns(
-            pl.col("HISTOLOGY").cast(pl.Int64, strict=False).alias("_hist_int")
-        )
-        df = df.with_columns(
-            pl.when(
-                pl.col("_hist_int").is_not_null()
-                & ~pl.col("_hist_int").is_in(HL_HISTOLOGY_CODES)
-            )
+            pl.when(pl.col("_hist_int").is_not_null() & ~pl.col("_hist_int").is_in(HL_HISTOLOGY_CODES))
             .then(pl.lit(1))
             .otherwise(pl.lit(0))
             .cast(pl.Int8)
@@ -477,9 +450,7 @@ def validate_tumor_registry(df: pl.DataFrame) -> pl.DataFrame:
             pl.when(
                 pl.col(b_col).is_not_null()
                 & (pl.col(b_col) != "")
-                & ~pl.col(b_col).str.to_uppercase().is_in(
-                    {v.upper() for v in _B_SYMPTOM_VALID}
-                )
+                & ~pl.col(b_col).str.to_uppercase().is_in({v.upper() for v in _B_SYMPTOM_VALID})
             )
             .then(pl.lit(1))
             .otherwise(pl.lit(0))
@@ -493,13 +464,7 @@ def validate_tumor_registry(df: pl.DataFrame) -> pl.DataFrame:
         df = df.with_columns(
             pl.when(
                 pl.col("AGE_AT_DIAGNOSIS").is_not_null()
-                & (
-                    (pl.col("AGE_AT_DIAGNOSIS") < 0)
-                    | (
-                        (pl.col("AGE_AT_DIAGNOSIS") > 120)
-                        & (pl.col("AGE_AT_DIAGNOSIS") != 200)
-                    )
-                )
+                & ((pl.col("AGE_AT_DIAGNOSIS") < 0) | ((pl.col("AGE_AT_DIAGNOSIS") > 120) & (pl.col("AGE_AT_DIAGNOSIS") != 200)))
             )
             .then(pl.lit(1))
             .otherwise(pl.lit(0))
@@ -510,7 +475,9 @@ def validate_tumor_registry(df: pl.DataFrame) -> pl.DataFrame:
     # --- Treatment timing vs DATE_OF_DIAGNOSIS ---
     if "DATE_OF_DIAGNOSIS" in df.columns:
         tx_cols = [
-            "DT_SURG", "DT_RAD", "DT_CHEMO",
+            "DT_SURG",
+            "DT_RAD",
+            "DT_CHEMO",
             "CHEMO_START_DATE_SUMMARY",
             "MOST_DEFINITIVE_SURGERY_DATE",
             "IMMUNO_START_DATE",
@@ -534,10 +501,7 @@ def validate_tumor_registry(df: pl.DataFrame) -> pl.DataFrame:
     # --- Primary site (lymph node check) ---
     if "PRIMARY_SITE" in df.columns:
         df = df.with_columns(
-            pl.when(
-                pl.col("PRIMARY_SITE").is_not_null()
-                & ~pl.col("PRIMARY_SITE").str.to_uppercase().str.contains(r"^C77[0-9]$")
-            )
+            pl.when(pl.col("PRIMARY_SITE").is_not_null() & ~pl.col("PRIMARY_SITE").str.to_uppercase().str.contains(r"^C77[0-9]$"))
             .then(pl.lit(1))
             .otherwise(pl.lit(0))
             .cast(pl.Int8)

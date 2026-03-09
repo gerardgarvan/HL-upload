@@ -5,31 +5,29 @@ Reuses _compute_hl_timeline pattern from validate_values, flag_small_cell from
 structural, and cohort/values constants. Produces structured data for Plan 02.
 """
 
-from datetime import date
 from pathlib import Path
 
 import polars as pl
 
+from src.clean.dedup import DEDUP_KEYS
+from src.clean.harmonize import PARTNER_FLAGS
+from src.validate.cohort import (
+    ALL_HL_CODES,
+    ALL_HL_NORMALIZED,
+    detect_dx_format,
+)
 from src.validate.structural import (
     PATID_COL,
     SMALL_CELL_THRESHOLD,
     TUMOR_REGISTRY_TABLES,
     completeness_by_partner,
-    flag_small_cell,
-)
-from src.validate.cohort import (
-    detect_dx_format,
-    ALL_HL_CODES,
-    ALL_HL_NORMALIZED,
 )
 from src.validate.values import (
-    MASKED_BIRTH_DATE,
-    ICD10_TRANSITION,
-    VITAL_RANGES,
     HL_LAB_RANGES,
+    ICD10_TRANSITION,
+    MASKED_BIRTH_DATE,
+    VITAL_RANGES,
 )
-from src.clean.dedup import DEDUP_KEYS
-from src.clean.harmonize import PARTNER_FLAGS
 
 # ---------------------------------------------------------------------------
 # Constants — HL subtype mapping (C81.x 4th character)
@@ -46,12 +44,31 @@ HL_SUBTYPE_MAP: dict[str, str] = {
 }
 
 SOUTHEAST_STATES: set[str] = {
-    "AL", "AR", "FL", "GA", "KY", "LA", "MS", "NC", "SC", "TN", "VA", "WV",
+    "AL",
+    "AR",
+    "FL",
+    "GA",
+    "KY",
+    "LA",
+    "MS",
+    "NC",
+    "SC",
+    "TN",
+    "VA",
+    "WV",
 }
 
 SCT_CPTS: set[str] = {
-    "38240", "38241", "38242", "38230", "38232",
-    "77401", "77402", "77407", "77412", "77427",
+    "38240",
+    "38241",
+    "38242",
+    "38230",
+    "38232",
+    "77401",
+    "77402",
+    "77407",
+    "77412",
+    "77427",
 }
 
 
@@ -63,10 +80,7 @@ def _first_hl_dx_and_code(table_map: dict[str, Path]) -> tuple[pl.DataFrame, pl.
 
     dx_format = detect_dx_format(diag_path)
     code_set = ALL_HL_CODES if dx_format == "dotted" else ALL_HL_NORMALIZED
-    dx_match_col = (
-        pl.col("DX") if dx_format == "dotted"
-        else pl.col("DX").str.to_uppercase().str.replace_all(r"\.", "")
-    )
+    dx_match_col = pl.col("DX") if dx_format == "dotted" else pl.col("DX").str.to_uppercase().str.replace_all(r"\.", "")
 
     diag = (
         pl.scan_parquet(diag_path)
@@ -79,12 +93,9 @@ def _first_hl_dx_and_code(table_map: dict[str, Path]) -> tuple[pl.DataFrame, pl.
     if diag.is_empty():
         return None
 
-    first_dx = (
-        diag.group_by(PATID_COL)
-        .agg(
-            pl.col("DX_DATE").min().alias("FIRST_HL_DX_DATE"),
-            pl.col("_DX_MATCH").first().alias("_HL_CODE"),
-        )
+    first_dx = diag.group_by(PATID_COL).agg(
+        pl.col("DX_DATE").min().alias("FIRST_HL_DX_DATE"),
+        pl.col("_DX_MATCH").first().alias("_HL_CODE"),
     )
     return first_dx, diag
 
@@ -149,16 +160,13 @@ def _first_tx_dates(
         for tc in available_tx:
             if tr[tc].dtype in (pl.String, pl.Utf8):
                 tr = tr.with_columns(
-                    pl.col(tc).str.to_date("%Y.%m.%d", strict=False)
+                    pl.col(tc)
+                    .str.to_date("%Y.%m.%d", strict=False)
                     .fill_null(pl.col(tc).str.to_date("%m/%d/%Y", strict=False))
                     .fill_null(pl.col(tc).str.to_date("%d%b%Y", strict=False))
                     .fill_null(pl.col(tc).str.to_date("%Y%m%d", strict=False))
                 )
-            tc_df = (
-                tr.filter(pl.col(tc).is_not_null())
-                .group_by(PATID_COL)
-                .agg(pl.col(tc).min().alias("FIRST_TX_DATE"))
-            )
+            tc_df = tr.filter(pl.col(tc).is_not_null()).group_by(PATID_COL).agg(pl.col(tc).min().alias("FIRST_TX_DATE"))
             if not tc_df.is_empty():
                 tx_frames.append(tc_df)
 
@@ -166,10 +174,7 @@ def _first_tx_dates(
         return pl.DataFrame(schema={PATID_COL: pl.String, "FIRST_HL_TX_DATE": pl.Date})
 
     all_tx = pl.concat(tx_frames)
-    return (
-        all_tx.group_by(PATID_COL)
-        .agg(pl.col("FIRST_TX_DATE").min().alias("FIRST_HL_TX_DATE"))
-    )
+    return all_tx.group_by(PATID_COL).agg(pl.col("FIRST_TX_DATE").min().alias("FIRST_HL_TX_DATE"))
 
 
 def _payer_at_dx(
@@ -178,15 +183,11 @@ def _payer_at_dx(
 ) -> pl.DataFrame:
     """PAYER_TYPE_PRIMARY from encounter closest to FIRST_HL_DX_DATE within ±90 days."""
     if not encounter_path or not encounter_path.exists():
-        return patients.select(PATID_COL).with_columns(
-            pl.lit(None).cast(pl.String).alias("PAYER_AT_DX")
-        )
+        return patients.select(PATID_COL).with_columns(pl.lit(None).cast(pl.String).alias("PAYER_AT_DX"))
 
     enc_schema = pl.read_parquet_schema(encounter_path)
     if "ADMIT_DATE" not in enc_schema or "PAYER_TYPE_PRIMARY" not in enc_schema:
-        return patients.select(PATID_COL).with_columns(
-            pl.lit(None).cast(pl.String).alias("PAYER_AT_DX")
-        )
+        return patients.select(PATID_COL).with_columns(pl.lit(None).cast(pl.String).alias("PAYER_AT_DX"))
 
     enc = (
         pl.scan_parquet(encounter_path)
@@ -196,31 +197,15 @@ def _payer_at_dx(
         .collect()
     )
     if enc.is_empty():
-        return patients.select(PATID_COL).with_columns(
-            pl.lit(None).cast(pl.String).alias("PAYER_AT_DX")
-        )
+        return patients.select(PATID_COL).with_columns(pl.lit(None).cast(pl.String).alias("PAYER_AT_DX"))
 
-    joined = (
-        patients.select(PATID_COL, "FIRST_HL_DX_DATE")
-        .join(enc, on=PATID_COL, how="inner")
-    )
-    joined = joined.with_columns(
-        (pl.col("ADMIT_DATE") - pl.col("FIRST_HL_DX_DATE")).dt.total_days().alias("_days_diff")
-    )
-    within = joined.filter(
-        (pl.col("_days_diff") >= -90) & (pl.col("_days_diff") <= 90)
-    )
+    joined = patients.select(PATID_COL, "FIRST_HL_DX_DATE").join(enc, on=PATID_COL, how="inner")
+    joined = joined.with_columns((pl.col("ADMIT_DATE") - pl.col("FIRST_HL_DX_DATE")).dt.total_days().alias("_days_diff"))
+    within = joined.filter((pl.col("_days_diff") >= -90) & (pl.col("_days_diff") <= 90))
     if within.is_empty():
-        return patients.select(PATID_COL).with_columns(
-            pl.lit(None).cast(pl.String).alias("PAYER_AT_DX")
-        )
+        return patients.select(PATID_COL).with_columns(pl.lit(None).cast(pl.String).alias("PAYER_AT_DX"))
 
-    closest = (
-        within.with_columns(pl.col("_days_diff").abs().alias("_abs_diff"))
-        .sort("_abs_diff")
-        .group_by(PATID_COL)
-        .first()
-    )
+    closest = within.with_columns(pl.col("_days_diff").abs().alias("_abs_diff")).sort("_abs_diff").group_by(PATID_COL).first()
     return patients.select(PATID_COL).join(
         closest.select(PATID_COL, pl.col("PAYER_TYPE_PRIMARY").alias("PAYER_AT_DX")),
         on=PATID_COL,
@@ -235,15 +220,11 @@ def _insurance_continuity(
 ) -> pl.DataFrame:
     """Flag=1 if gap >30 days in ENROLLMENT covering treatment window."""
     if not enrollment_path or not enrollment_path.exists():
-        return patients.select(PATID_COL).with_columns(
-            pl.lit(None).cast(pl.Int8).alias("INSURANCE_CONTINUITY")
-        )
+        return patients.select(PATID_COL).with_columns(pl.lit(None).cast(pl.Int8).alias("INSURANCE_CONTINUITY"))
 
     enr_schema = pl.read_parquet_schema(enrollment_path)
     if "ENR_START_DATE" not in enr_schema or "ENR_END_DATE" not in enr_schema:
-        return patients.select(PATID_COL).with_columns(
-            pl.lit(None).cast(pl.Int8).alias("INSURANCE_CONTINUITY")
-        )
+        return patients.select(PATID_COL).with_columns(pl.lit(None).cast(pl.Int8).alias("INSURANCE_CONTINUITY"))
 
     enr = (
         pl.scan_parquet(enrollment_path)
@@ -254,9 +235,7 @@ def _insurance_continuity(
         .collect()
     )
     if enr.is_empty():
-        return patients.select(PATID_COL).with_columns(
-            pl.lit(1).cast(pl.Int8).alias("INSURANCE_CONTINUITY")
-        )
+        return patients.select(PATID_COL).with_columns(pl.lit(1).cast(pl.Int8).alias("INSURANCE_CONTINUITY"))
 
     pt = patients.select(
         PATID_COL,
@@ -285,11 +264,7 @@ def _insurance_continuity(
         pt = pt.join(last_enc, on=PATID_COL, how="left")
         pt = pt.with_columns(
             pl.when(pl.col("_last_enc").is_not_null())
-            .then(
-                pl.when(pl.col("_last_enc") < pl.col("_window_end"))
-                .then(pl.col("_last_enc"))
-                .otherwise(pl.col("_window_end"))
-            )
+            .then(pl.when(pl.col("_last_enc") < pl.col("_window_end")).then(pl.col("_last_enc")).otherwise(pl.col("_window_end")))
             .otherwise(pl.col("_window_end"))
             .alias("_window_end")
         )
@@ -300,13 +275,10 @@ def _insurance_continuity(
         how="inner",
     )
     overlapping = enr_pt.filter(
-        (pl.col("ENR_END_DATE") >= pl.col("FIRST_HL_DX_DATE"))
-        & (pl.col("ENR_START_DATE") <= pl.col("_window_end"))
+        (pl.col("ENR_END_DATE") >= pl.col("FIRST_HL_DX_DATE")) & (pl.col("ENR_START_DATE") <= pl.col("_window_end"))
     )
     if overlapping.is_empty():
-        return patients.select(PATID_COL).with_columns(
-            pl.lit(1).cast(pl.Int8).alias("INSURANCE_CONTINUITY")
-        )
+        return patients.select(PATID_COL).with_columns(pl.lit(1).cast(pl.Int8).alias("INSURANCE_CONTINUITY"))
 
     def has_gap_gt_30(periods: list[tuple]) -> bool:
         if not periods:
@@ -327,19 +299,18 @@ def _insurance_continuity(
     for pid in patients[PATID_COL].unique().to_list():
         sub = overlapping.filter(pl.col(PATID_COL) == pid)
         periods = [
-            (row["ENR_START_DATE"], row["ENR_END_DATE"])
-            for row in sub.select("ENR_START_DATE", "ENR_END_DATE").iter_rows(named=True)
+            (row["ENR_START_DATE"], row["ENR_END_DATE"]) for row in sub.select("ENR_START_DATE", "ENR_END_DATE").iter_rows(named=True)
         ]
         periods = [(s, e) for s, e in periods if s is not None and e is not None]
         gap_flags.append((pid, 1 if has_gap_gt_30(periods) else 0))
 
-    gap_df = pl.DataFrame({
-        PATID_COL: [x[0] for x in gap_flags],
-        "INSURANCE_CONTINUITY": pl.Series([x[1] for x in gap_flags], dtype=pl.Int8),
-    })
-    return patients.select(PATID_COL).join(gap_df, on=PATID_COL, how="left").with_columns(
-        pl.col("INSURANCE_CONTINUITY").fill_null(1)
+    gap_df = pl.DataFrame(
+        {
+            PATID_COL: [x[0] for x in gap_flags],
+            "INSURANCE_CONTINUITY": pl.Series([x[1] for x in gap_flags], dtype=pl.Int8),
+        }
     )
+    return patients.select(PATID_COL).join(gap_df, on=PATID_COL, how="left").with_columns(pl.col("INSURANCE_CONTINUITY").fill_null(1))
 
 
 def _region(
@@ -348,15 +319,11 @@ def _region(
 ) -> pl.DataFrame:
     """REGION: Southeast vs Other vs Unknown from LDS_ADDRESS_HISTORY.ADDRESS_STATE."""
     if not address_path or not address_path.exists():
-        return patients.select(PATID_COL).with_columns(
-            pl.lit("Unknown").alias("REGION")
-        )
+        return patients.select(PATID_COL).with_columns(pl.lit("Unknown").alias("REGION"))
 
     adr_schema = pl.read_parquet_schema(address_path)
     if "ADDRESS_STATE" not in adr_schema:
-        return patients.select(PATID_COL).with_columns(
-            pl.lit("Unknown").alias("REGION")
-        )
+        return patients.select(PATID_COL).with_columns(pl.lit("Unknown").alias("REGION"))
 
     adr = (
         pl.scan_parquet(address_path)
@@ -367,30 +334,25 @@ def _region(
         .collect()
     )
     if adr.is_empty():
-        return patients.select(PATID_COL).with_columns(
-            pl.lit("Unknown").alias("REGION")
-        )
+        return patients.select(PATID_COL).with_columns(pl.lit("Unknown").alias("REGION"))
 
     adr = adr.with_columns(
-        pl.when(
-            pl.col("ADDRESS_STATE").is_null()
-            | pl.col("ADDRESS_STATE").is_in(["NI", "UN", ""])
-        )
+        pl.when(pl.col("ADDRESS_STATE").is_null() | pl.col("ADDRESS_STATE").is_in(["NI", "UN", ""]))
         .then(pl.lit("Unknown"))
-        .when(
-            pl.col("ADDRESS_STATE").str.to_uppercase().is_in(
-                list(SOUTHEAST_STATES)
-            )
-        )
+        .when(pl.col("ADDRESS_STATE").str.to_uppercase().is_in(list(SOUTHEAST_STATES)))
         .then(pl.lit("Southeast"))
         .otherwise(pl.lit("Other"))
         .alias("REGION")
     )
-    return patients.select(PATID_COL).join(
-        adr.select(PATID_COL, "REGION"),
-        on=PATID_COL,
-        how="left",
-    ).with_columns(pl.col("REGION").fill_null("Unknown"))
+    return (
+        patients.select(PATID_COL)
+        .join(
+            adr.select(PATID_COL, "REGION"),
+            on=PATID_COL,
+            how="left",
+        )
+        .with_columns(pl.col("REGION").fill_null("Unknown"))
+    )
 
 
 def _hl_subtype_from_code(code: str) -> str:
@@ -415,18 +377,20 @@ def build_patient_level_derived(table_map: dict[str, Path]) -> pl.DataFrame:
     """
     out = _first_hl_dx_and_code(table_map)
     if out is None:
-        return pl.DataFrame(schema={
-            PATID_COL: pl.String,
-            "FIRST_HL_DX_DATE": pl.Date,
-            "FIRST_HL_TX_DATE": pl.Date,
-            "DX_TO_TX_DAYS": pl.Int64,
-            "AGE_AT_HL_DX": pl.Float64,
-            "AGE_BAND": pl.String,
-            "HL_SUBTYPE": pl.String,
-            "PAYER_AT_DX": pl.String,
-            "INSURANCE_CONTINUITY": pl.Int8,
-            "REGION": pl.String,
-        })
+        return pl.DataFrame(
+            schema={
+                PATID_COL: pl.String,
+                "FIRST_HL_DX_DATE": pl.Date,
+                "FIRST_HL_TX_DATE": pl.Date,
+                "DX_TO_TX_DAYS": pl.Int64,
+                "AGE_AT_HL_DX": pl.Float64,
+                "AGE_BAND": pl.String,
+                "HL_SUBTYPE": pl.String,
+                "PAYER_AT_DX": pl.String,
+                "INSURANCE_CONTINUITY": pl.Int8,
+                "REGION": pl.String,
+            }
+        )
 
     first_dx, _ = out
     hl_ids = pl.col(PATID_COL).is_in(first_dx[PATID_COL].implode())
@@ -453,22 +417,13 @@ def build_patient_level_derived(table_map: dict[str, Path]) -> pl.DataFrame:
             )
             base = base.join(demo, on=PATID_COL, how="left")
             base = base.with_columns(
-                pl.when(
-                    pl.col("BIRTH_DATE").is_not_null()
-                    & (pl.col("BIRTH_DATE") != pl.lit(MASKED_BIRTH_DATE))
-                )
-                .then(
-                    (pl.col("FIRST_HL_DX_DATE") - pl.col("BIRTH_DATE")).dt.total_days()
-                    / 365.25
-                )
+                pl.when(pl.col("BIRTH_DATE").is_not_null() & (pl.col("BIRTH_DATE") != pl.lit(MASKED_BIRTH_DATE)))
+                .then((pl.col("FIRST_HL_DX_DATE") - pl.col("BIRTH_DATE")).dt.total_days() / 365.25)
                 .otherwise(None)
                 .alias("AGE_AT_HL_DX")
             )
             base = base.with_columns(
-                pl.when(
-                    (pl.col("BIRTH_DATE") == pl.lit(MASKED_BIRTH_DATE))
-                    | pl.col("BIRTH_DATE").is_null()
-                )
+                pl.when((pl.col("BIRTH_DATE") == pl.lit(MASKED_BIRTH_DATE)) | pl.col("BIRTH_DATE").is_null())
                 .then(pl.lit("65+"))
                 .when(pl.col("AGE_AT_HL_DX").is_null())
                 .then(pl.lit(None))
@@ -492,9 +447,9 @@ def build_patient_level_derived(table_map: dict[str, Path]) -> pl.DataFrame:
             pl.lit(None).cast(pl.String).alias("AGE_BAND"),
         )
 
-    base = base.with_columns(
-        pl.col("_HL_CODE").map_elements(_hl_subtype_from_code, return_dtype=pl.String).alias("HL_SUBTYPE")
-    ).drop("_HL_CODE")
+    base = base.with_columns(pl.col("_HL_CODE").map_elements(_hl_subtype_from_code, return_dtype=pl.String).alias("HL_SUBTYPE")).drop(
+        "_HL_CODE"
+    )
 
     enc_path = table_map.get("ENCOUNTER")
     payer = _payer_at_dx(enc_path, base)
@@ -588,7 +543,8 @@ def aggregate_dq_metrics(
             continue
         schema = pl.read_parquet_schema(path)
         flag_cols = [
-            c for c in schema
+            c
+            for c in schema
             if "_val_" in c
             and (
                 "range" in c

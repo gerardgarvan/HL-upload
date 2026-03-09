@@ -1,7 +1,5 @@
 """Unit tests for _suppress (small-cell suppression for CSV)."""
 
-import pytest
-
 from src.report.quality_report import _suppress
 
 
