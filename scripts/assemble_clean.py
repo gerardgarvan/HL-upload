@@ -24,6 +24,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from src.clean.outcomes_flags import add_modality_flags
 from src.load.config import load_config
 from src.load.schema import parse_datastructure, resolve_table_name
+from src.report.encounter_payer_summary import build_encounter_payer_summary
 from src.report.quality_report import (
     aggregate_dq_metrics,
     build_patient_level_derived,
@@ -101,6 +102,15 @@ def main(config_path: Path | None = None) -> None:
     patient_df.write_parquet(patient_path, compression="snappy")
     print(f"  Rows: {patient_df.height:,}")
     print(f"  Written: {patient_path}")
+
+    # Encounter-payer summary (Phase 14)
+    enc_summary = build_encounter_payer_summary(table_map)
+    if not enc_summary.is_empty():
+        enc_path = derived_dir / "encounter_payer_summary.parquet"
+        enc_summary.write_parquet(enc_path, compression="snappy")
+        print(f"  encounter_payer_summary.parquet -> {enc_path} ({enc_summary.height:,} rows)")
+    else:
+        print("  encounter_payer_summary: SKIP (no ENCOUNTER data)")
 
     # Generate reports
     print("\n--- Generate reports ---")

@@ -519,16 +519,27 @@ Addresses technical debt and quality gaps from [.planning/codebase/CONCERNS.md](
 **Goal:** Add pre-commit hooks, CI placeholder, Makefile, and mark CONCERNS as resolved.
 
 **Success Criteria:**
-- [ ] Pre-commit runs ruff (check + format) and pytest before commit
-- [ ] `make test`, `make lint`, `make ci` work
-- [ ] GitHub Actions ci.yml runs lint and test on push/PR
-- [ ] CONCERNS.md updated with Phase 8–9 resolved markers
-- [ ] STATE.md and ROADMAP current
+- [x] Pre-commit runs ruff (check + format) and pytest before commit
+- [x] `make test`, `make lint`, `make ci` work
+- [x] GitHub Actions ci.yml runs lint and test on push/PR
+- [x] CONCERNS.md updated with Phase 8–9 resolved markers
+- [x] STATE.md and ROADMAP current
 
 **Dependencies:** Phase 9
 
 **Plans:** 1 plan
-- [ ] 10-01-PLAN.md — Pre-commit, Makefile, CI, CONCERNS/STATE/ROADMAP updates
+- [x] 10-01-PLAN.md — Pre-commit, Makefile, CI, CONCERNS/STATE/ROADMAP updates
+
+### Phase 14: ENCOUNTER Patient-Level Summary (Payer Focus)
+
+Summarize ENCOUNTER at the patient level with emphasis on payer for insurance inequities analysis:
+
+- **Milestone:** [.planning/milestones/MILESTONE-ENCOUNTER-PAYER-SUMMARY.md](milestones/MILESTONE-ENCOUNTER-PAYER-SUMMARY.md)
+- **Plan:** [.planning/phases/14-encounter-payer-summary/14-01-PLAN.md](phases/14-encounter-payer-summary/14-01-PLAN.md)
+- **Scope:** N_ENCOUNTERS, N_ENCOUNTERS_WITH_PAYER, N_DISTINCT_PAYERS, PAYER_PRIMARY, PAYER_TRANSITION; `derived/encounter_payer_summary.parquet`
+- **Effort:** ~1–1.5 days
+
+---
 
 ### Phase 11: Remove XLSX Dependencies (Use CSV)
 
