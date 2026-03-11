@@ -64,7 +64,7 @@ def main(config_path: Path | None = None) -> None:
     table_map = _build_table_map(table_filenames, paths.parquet_dir)
 
     parquet_clean_dir = paths.parquet_dir.parent / "parquet_clean"
-    derived_dir = paths.parquet_dir.parent / "derived"
+    derived_dir = paths.derived_dir
     reports_dir = PROJECT_ROOT / "reports"
 
     parquet_clean_dir.mkdir(parents=True, exist_ok=True)

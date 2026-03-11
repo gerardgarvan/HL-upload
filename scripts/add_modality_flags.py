@@ -34,7 +34,7 @@ def main(config_path: Path | None = None) -> None:
     _, table_filenames = parse_datastructure(paths.datastructure_path)
     table_map = _build_table_map(table_filenames, paths.parquet_dir)
 
-    derived_dir = paths.parquet_dir.parent / "derived"
+    derived_dir = paths.derived_dir
     patient_path = derived_dir / "patient_level.parquet"
     outcomes_path = Path(os.environ.get("OUTCOMES_PATH", str(PROJECT_ROOT / "Outcomes.csv")))
 

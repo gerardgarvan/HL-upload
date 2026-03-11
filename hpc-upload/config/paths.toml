@@ -16,3 +16,5 @@ valuesets_path = "valuesets.csv"
 [paths.output]
 parquet_dir = "hpc-upload/parquet"
 logs_dir = "hpc-upload/logs"
+# Relative to project root (HL-upload). Derived outputs: patient_level, encounter_payer_summary
+derived_dir = "derived"

@@ -18,6 +18,7 @@ class Paths:
     datastructure_path: Path
     valuesets_path: Path
     parquet_dir: Path
+    derived_dir: Path
 
 
 def _project_root() -> Path:
@@ -48,6 +49,12 @@ def load_config(config_path: Path | None = None) -> Paths:
     scratch_root = Path(p["scratch_root"])
     output = p.get("output", {})
     parquet_rel = output.get("parquet_dir", "hl-clean/parquet")
+    derived_rel = output.get("derived_dir", "derived")
+    derived_path = Path(derived_rel)
+    if not derived_path.is_absolute():
+        derived_dir = (root / derived_rel).resolve()
+    else:
+        derived_dir = derived_path.resolve()
 
     return Paths(
         data_root=Path(p["data_root"]),
@@ -55,4 +62,5 @@ def load_config(config_path: Path | None = None) -> Paths:
         datastructure_path=resolve(p["datastructure_path"]),
         valuesets_path=resolve(p["valuesets_path"]),
         parquet_dir=scratch_root / parquet_rel,
+        derived_dir=derived_dir,
     )

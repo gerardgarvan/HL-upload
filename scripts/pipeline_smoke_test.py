@@ -61,7 +61,7 @@ def main(config_path: Path | None = None) -> None:
     parquet_files = list(paths.parquet_dir.glob("*.parquet")) if paths.parquet_dir.exists() else []
     struct_rpt = PROJECT_ROOT / "reports" / "structural_validation.md"
     parquet_clean = paths.parquet_dir.parent / "parquet_clean"
-    patient_level = paths.parquet_dir.parent / "derived" / "patient_level.parquet"
+    patient_level = paths.derived_dir / "patient_level.parquet"
 
     checks = [
         (parquet_files, "At least one Parquet in parquet_dir"),
