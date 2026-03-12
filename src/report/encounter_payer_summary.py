@@ -3,7 +3,8 @@
 
 Scope: Only patients with ENROLLMENT records.
 Output: N_ENCOUNTERS, N_ENCOUNTERS_WITH_PAYER, N_DISTINCT_PAYER_CATEGORIES,
-PAYER_CATEGORY_PRIMARY (most frequent payer category), PAYER_TRANSITION (1 if >1 category).
+PAYER_CATEGORY_PRIMARY, PAYER_CATEGORY_AT_FIRST_DX, PAYER_CATEGORY_AT_FIRST_CHEMO,
+PAYER_CATEGORY_AT_LAST_CHEMO, PAYER_CATEGORY_MOST_FREQUENT_AT_CHEMO, PAYER_TRANSITION.
 
 Payer categories: Medicare, Medicaid, Private, Other government,
 No payment / Self-pay, Other, Unavailable, Unknown (PCORnet typology prefix mapping).
@@ -14,7 +15,12 @@ from pathlib import Path
 
 import polars as pl
 
-from src.validate.structural import PATID_COL
+from src.validate.cohort import (
+    ALL_HL_CODES,
+    ALL_HL_NORMALIZED,
+    detect_dx_format,
+)
+from src.validate.structural import PATID_COL, TUMOR_REGISTRY_TABLES
 
 INVALID_PAYER: set[str] = {"NI", "UN", "OT"}
 
@@ -50,6 +56,129 @@ def _valid_payer_expr() -> pl.Expr:
     )
 
 
+def _get_first_hl_dx_dates(table_map: dict[str, Path], ids: pl.Series) -> pl.DataFrame | None:
+    """First HL diagnosis date per patient. Returns None if no DIAGNOSIS/HL data."""
+    diag_path = table_map.get("DIAGNOSIS")
+    if not diag_path or not diag_path.exists():
+        return None
+    dx_format = detect_dx_format(diag_path)
+    code_set = ALL_HL_CODES if dx_format == "dotted" else ALL_HL_NORMALIZED
+    dx_match = pl.col("DX") if dx_format == "dotted" else pl.col("DX").str.to_uppercase().str.replace_all(r"\.", "")
+    diag = (
+        pl.scan_parquet(diag_path)
+        .with_columns(pl.col(PATID_COL).cast(pl.String))
+        .filter(pl.col(PATID_COL).is_in(ids.implode()))
+        .with_columns(dx_match.alias("_DX_MATCH"))
+        .filter(pl.col("_DX_MATCH").is_in(code_set))
+        .filter(pl.col("DX_DATE").is_not_null())
+        .group_by(PATID_COL)
+        .agg(pl.col("DX_DATE").min().alias("FIRST_HL_DX_DATE"))
+        .collect()
+    )
+    return diag if not diag.is_empty() else None
+
+
+def _get_chemo_dates(table_map: dict[str, Path], ids: pl.Series) -> pl.DataFrame | None:
+    """First and last chemo date per patient. Sources: TR DT_CHEMO, CHEMO_START_DATE_SUMMARY, PRESCRIBING RX_ORDER_DATE."""
+    chemo_frames: list[pl.DataFrame] = []
+    tr_cols = ["DT_CHEMO", "CHEMO_START_DATE_SUMMARY"]
+    for tr_name in sorted(TUMOR_REGISTRY_TABLES):
+        tr_path = table_map.get(tr_name)
+        if not tr_path or not tr_path.exists():
+            continue
+        schema = pl.read_parquet_schema(tr_path)
+        available = [c for c in tr_cols if c in schema.names()]
+        if not available:
+            continue
+        tr = (
+            pl.scan_parquet(tr_path)
+            .with_columns(pl.col(PATID_COL).cast(pl.String))
+            .filter(pl.col(PATID_COL).is_in(ids.implode()))
+            .select([PATID_COL] + available)
+            .collect()
+        )
+        if tr.is_empty():
+            continue
+        for col in available:
+            if tr[col].dtype in (pl.String, pl.Utf8):
+                tr = tr.with_columns(
+                    pl.col(col)
+                    .str.to_date("%Y.%m.%d", strict=False)
+                    .fill_null(pl.col(col).str.to_date("%m/%d/%Y", strict=False))
+                    .fill_null(pl.col(col).str.to_date("%d%b%Y", strict=False))
+                    .fill_null(pl.col(col).str.to_date("%Y%m%d", strict=False))
+                    .alias("_d")
+                )
+            else:
+                tr = tr.with_columns(pl.col(col).alias("_d"))
+            tc = tr.filter(pl.col("_d").is_not_null()).select(PATID_COL, pl.col("_d").alias("_chemo_d"))
+            if not tc.is_empty():
+                chemo_frames.append(tc)
+            tr = tr.drop("_d")
+    rx_path = table_map.get("PRESCRIBING")
+    if rx_path and rx_path.exists():
+        rx_schema = pl.read_parquet_schema(rx_path)
+        if "RX_ORDER_DATE" in rx_schema.names():
+            rx = (
+                pl.scan_parquet(rx_path)
+                .with_columns(pl.col(PATID_COL).cast(pl.String))
+                .filter(pl.col(PATID_COL).is_in(ids.implode()))
+                .filter(pl.col("RX_ORDER_DATE").is_not_null())
+                .select(PATID_COL, pl.col("RX_ORDER_DATE").alias("_chemo_d"))
+                .collect()
+            )
+            if not rx.is_empty():
+                chemo_frames.append(rx)
+    if not chemo_frames:
+        return None
+    all_chemo = pl.concat(chemo_frames)
+    return all_chemo.group_by(PATID_COL).agg(
+        pl.col("_chemo_d").min().alias("FIRST_CHEMO_DATE"),
+        pl.col("_chemo_d").max().alias("LAST_CHEMO_DATE"),
+    )
+
+
+def _payer_at_date(
+    enc_path: Path,
+    patients: pl.DataFrame,
+    date_col: str,
+    window_days: int = 90,
+) -> pl.DataFrame:
+    """PAYER_TYPE_PRIMARY from encounter closest to patients[date_col] within ±window_days."""
+    enc_schema = pl.read_parquet_schema(enc_path)
+    if "ADMIT_DATE" not in enc_schema or "PAYER_TYPE_PRIMARY" not in enc_schema:
+        return patients.select(PATID_COL).with_columns(pl.lit(None).cast(pl.String).alias("_raw_payer"))
+    enc = (
+        pl.scan_parquet(enc_path)
+        .with_columns(pl.col(PATID_COL).cast(pl.String))
+        .filter(pl.col(PATID_COL).is_in(patients[PATID_COL].implode()))
+        .select(PATID_COL, "ADMIT_DATE", "PAYER_TYPE_PRIMARY")
+        .collect()
+    )
+    if enc.is_empty():
+        return patients.select(PATID_COL).with_columns(pl.lit(None).cast(pl.String).alias("_raw_payer"))
+    joined = patients.select(PATID_COL, date_col).join(enc, on=PATID_COL, how="inner")
+    joined = joined.with_columns(
+        (pl.col("ADMIT_DATE") - pl.col(date_col)).dt.total_days().alias("_days_diff")
+    )
+    within = joined.filter(
+        (pl.col("_days_diff") >= -window_days) & (pl.col("_days_diff") <= window_days)
+    )
+    if within.is_empty():
+        return patients.select(PATID_COL).with_columns(pl.lit(None).cast(pl.String).alias("_raw_payer"))
+    closest = (
+        within.with_columns(pl.col("_days_diff").abs().alias("_abs"))
+        .sort("_abs")
+        .group_by(PATID_COL)
+        .first()
+    )
+    return patients.select(PATID_COL).join(
+        closest.select(PATID_COL, pl.col("PAYER_TYPE_PRIMARY").alias("_raw_payer")),
+        on=PATID_COL,
+        how="left",
+    )
+
+
 def build_encounter_payer_summary(table_map: dict[str, Path]) -> pl.DataFrame:
     """Summarize ENCOUNTER at patient level with payer-focused variables.
 
@@ -71,6 +200,10 @@ def build_encounter_payer_summary(table_map: dict[str, Path]) -> pl.DataFrame:
         "N_ENCOUNTERS_WITH_PAYER": pl.Int64,
         "N_DISTINCT_PAYER_CATEGORIES": pl.Int64,
         "PAYER_CATEGORY_PRIMARY": pl.String,
+        "PAYER_CATEGORY_AT_FIRST_DX": pl.String,
+        "PAYER_CATEGORY_AT_FIRST_CHEMO": pl.String,
+        "PAYER_CATEGORY_AT_LAST_CHEMO": pl.String,
+        "PAYER_CATEGORY_MOST_FREQUENT_AT_CHEMO": pl.String,
         "PAYER_TRANSITION": pl.Int8,
     }
 
@@ -171,11 +304,115 @@ def build_encounter_payer_summary(table_map: dict[str, Path]) -> pl.DataFrame:
         .cast(pl.Int8)
         .alias("PAYER_TRANSITION")
     )
+
+    # Payer at first diagnosis, first chemo, last chemo, most frequent at chemo
+    ids = base[PATID_COL]
+    first_dx = _get_first_hl_dx_dates(table_map, ids)
+    chemo = _get_chemo_dates(table_map, ids)
+
+    if first_dx is not None:
+        payer_dx = _payer_at_date(enc_path, first_dx, "FIRST_HL_DX_DATE")
+        payer_dx = payer_dx.with_columns(
+            pl.col("_raw_payer")
+            .map_batches(
+                lambda s: pl.Series([_collapse_payer_category(v) for v in s], dtype=pl.String)
+            )
+            .alias("PAYER_CATEGORY_AT_FIRST_DX")
+        )
+        base = base.join(
+            payer_dx.select(PATID_COL, "PAYER_CATEGORY_AT_FIRST_DX"),
+            on=PATID_COL,
+            how="left",
+        )
+    else:
+        base = base.with_columns(pl.lit(None).cast(pl.String).alias("PAYER_CATEGORY_AT_FIRST_DX"))
+
+    if chemo is not None:
+        payer_first = _payer_at_date(enc_path, chemo, "FIRST_CHEMO_DATE")
+        payer_first = payer_first.with_columns(
+            pl.col("_raw_payer")
+            .map_batches(
+                lambda s: pl.Series([_collapse_payer_category(v) for v in s], dtype=pl.String)
+            )
+            .alias("PAYER_CATEGORY_AT_FIRST_CHEMO")
+        )
+        base = base.join(
+            payer_first.select(PATID_COL, "PAYER_CATEGORY_AT_FIRST_CHEMO"),
+            on=PATID_COL,
+            how="left",
+        )
+
+        payer_last = _payer_at_date(enc_path, chemo, "LAST_CHEMO_DATE")
+        payer_last = payer_last.with_columns(
+            pl.col("_raw_payer")
+            .map_batches(
+                lambda s: pl.Series([_collapse_payer_category(v) for v in s], dtype=pl.String)
+            )
+            .alias("PAYER_CATEGORY_AT_LAST_CHEMO")
+        )
+        base = base.join(
+            payer_last.select(PATID_COL, "PAYER_CATEGORY_AT_LAST_CHEMO"),
+            on=PATID_COL,
+            how="left",
+        )
+
+        # Most frequent payer at chemo visits: encounters with ADMIT_DATE in [first_chemo, last_chemo]
+        enc_chemo = (
+            pl.scan_parquet(enc_path)
+            .with_columns(pl.col(PATID_COL).cast(pl.String))
+            .filter(pl.col(PATID_COL).is_in(chemo[PATID_COL].implode()))
+            .select(PATID_COL, "ADMIT_DATE", "PAYER_TYPE_PRIMARY")
+            .collect()
+        )
+        enc_chemo = enc_chemo.join(
+            chemo.select(PATID_COL, "FIRST_CHEMO_DATE", "LAST_CHEMO_DATE"),
+            on=PATID_COL,
+            how="inner",
+        )
+        enc_chemo = enc_chemo.filter(
+            (pl.col("ADMIT_DATE") >= pl.col("FIRST_CHEMO_DATE"))
+            & (pl.col("ADMIT_DATE") <= pl.col("LAST_CHEMO_DATE"))
+            & pl.col("PAYER_TYPE_PRIMARY").is_not_null()
+            & (pl.col("PAYER_TYPE_PRIMARY") != "")
+            & ~pl.col("PAYER_TYPE_PRIMARY").is_in(INVALID_PAYER)
+        )
+        if enc_chemo.is_empty():
+            base = base.with_columns(
+                pl.lit(None).cast(pl.String).alias("PAYER_CATEGORY_MOST_FREQUENT_AT_CHEMO")
+            )
+        else:
+            enc_chemo = enc_chemo.with_columns(
+                pl.col("PAYER_TYPE_PRIMARY")
+                .map_batches(
+                    lambda s: pl.Series([_collapse_payer_category(v) for v in s], dtype=pl.String)
+                )
+                .alias("PAYER_CATEGORY")
+            )
+            mode_chemo = (
+                enc_chemo.group_by(PATID_COL, "PAYER_CATEGORY")
+                .agg(pl.len().alias("_n"))
+                .sort("_n", descending=True)
+                .group_by(PATID_COL)
+                .first()
+                .select(PATID_COL, pl.col("PAYER_CATEGORY").alias("PAYER_CATEGORY_MOST_FREQUENT_AT_CHEMO"))
+            )
+            base = base.join(mode_chemo, on=PATID_COL, how="left")
+    else:
+        base = base.with_columns(
+            pl.lit(None).cast(pl.String).alias("PAYER_CATEGORY_AT_FIRST_CHEMO"),
+            pl.lit(None).cast(pl.String).alias("PAYER_CATEGORY_AT_LAST_CHEMO"),
+            pl.lit(None).cast(pl.String).alias("PAYER_CATEGORY_MOST_FREQUENT_AT_CHEMO"),
+        )
+
     return base.select(
         PATID_COL,
         "N_ENCOUNTERS",
         "N_ENCOUNTERS_WITH_PAYER",
         "N_DISTINCT_PAYER_CATEGORIES",
         "PAYER_CATEGORY_PRIMARY",
+        "PAYER_CATEGORY_AT_FIRST_DX",
+        "PAYER_CATEGORY_AT_FIRST_CHEMO",
+        "PAYER_CATEGORY_AT_LAST_CHEMO",
+        "PAYER_CATEGORY_MOST_FREQUENT_AT_CHEMO",
         "PAYER_TRANSITION",
     )

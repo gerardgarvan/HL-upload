@@ -120,6 +120,10 @@ Scope: Only patients with at least one ENROLLMENT record. Payer classified into 
 | `N_ENCOUNTERS_WITH_PAYER` | Int64 | Count of rows where PAYER_TYPE_PRIMARY is non-null, non-empty, and not in {NI, UN, OT} |
 | `N_DISTINCT_PAYER_CATEGORIES` | Int64 | Count of distinct payer categories per patient |
 | `PAYER_CATEGORY_PRIMARY` | String | Most frequent payer category; null if none. Categories: Medicare, Medicaid, Private, Other government, No payment / Self-pay, Other, Unavailable, Unknown |
+| `PAYER_CATEGORY_AT_FIRST_DX` | String | Payer category from encounter closest to first HL diagnosis (within ±90 days); null if no HL DX or no encounter |
+| `PAYER_CATEGORY_AT_FIRST_CHEMO` | String | Payer category from encounter closest to first chemo date (within ±90 days); chemo from TUMOR_REGISTRY DT_CHEMO/CHEMO_START_DATE_SUMMARY or PRESCRIBING RX_ORDER_DATE |
+| `PAYER_CATEGORY_AT_LAST_CHEMO` | String | Payer category from encounter closest to last chemo date (within ±90 days) |
+| `PAYER_CATEGORY_MOST_FREQUENT_AT_CHEMO` | String | Most frequent payer category among encounters with ADMIT_DATE in [first chemo, last chemo]; null if no chemo |
 | `PAYER_TRANSITION` | Int8 | 1 if N_DISTINCT_PAYER_CATEGORIES &gt; 1; 0 otherwise |
 
 **Payer category mapping** (PCORnet typology): 1x→Medicare, 2x→Medicaid, 5x/6x→Private, 3x/4x→Other government, 8x→No payment / Self-pay, 7x/9x→Other, 99/9999→Unavailable, NI/UN/OT→Unknown.
