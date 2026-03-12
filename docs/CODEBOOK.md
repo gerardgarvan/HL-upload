@@ -110,15 +110,19 @@ See `docs/FLAG_CODES.md` for code sets.
 ## 6a. Encounter-Payer Summary (Phase 14)
 
 **Source:** `src/report/encounter_payer_summary.py` — `build_encounter_payer_summary()`  
-**Output:** `derived/encounter_payer_summary.parquet` (one row per patient with encounters)
+**Output:** `derived/encounter_payer_summary.parquet` (one row per patient with encounters **who has ENROLLMENT**)
+
+Scope: Only patients with at least one ENROLLMENT record. Payer classified into categories via PCORnet typology prefix.
 
 | Variable | Type | Creation logic |
 |----------|------|----------------|
 | `N_ENCOUNTERS` | Int64 | Count of ENCOUNTER rows per patient |
 | `N_ENCOUNTERS_WITH_PAYER` | Int64 | Count of rows where PAYER_TYPE_PRIMARY is non-null, non-empty, and not in {NI, UN, OT} |
-| `N_DISTINCT_PAYERS` | Int64 | Count of distinct valid PAYER_TYPE_PRIMARY values per patient |
-| `PAYER_PRIMARY` | String | Most frequent valid PAYER_TYPE_PRIMARY; null if none |
-| `PAYER_TRANSITION` | Int8 | 1 if N_DISTINCT_PAYERS &gt; 1; 0 otherwise |
+| `N_DISTINCT_PAYER_CATEGORIES` | Int64 | Count of distinct payer categories per patient |
+| `PAYER_CATEGORY_PRIMARY` | String | Most frequent payer category; null if none. Categories: Medicare, Medicaid, Private, Other government, No payment / Self-pay, Other, Unavailable, Unknown |
+| `PAYER_TRANSITION` | Int8 | 1 if N_DISTINCT_PAYER_CATEGORIES &gt; 1; 0 otherwise |
+
+**Payer category mapping** (PCORnet typology): 1x→Medicare, 2x→Medicaid, 5x/6x→Private, 3x/4x→Other government, 8x→No payment / Self-pay, 7x/9x→Other, 99/9999→Unavailable, NI/UN/OT→Unknown.
 
 ---
 
