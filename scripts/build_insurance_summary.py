@@ -75,6 +75,10 @@ def main(config_path: Path | None = None) -> None:
 
     print(f"\n  derived_dir: {derived_dir}")
     print(f"  Rows: {df.height:,}")
+    # Ensure DUAL_ELIGIBLE exists so it always appears in reports (add 0 if parquet was built pre-Phase 16)
+    if "DUAL_ELIGIBLE" not in df.columns:
+        df = df.with_columns(pl.lit(0).cast(pl.Int8).alias("DUAL_ELIGIBLE"))
+        print("  Note: DUAL_ELIGIBLE was missing in parquet; added as 0. Re-run assemble_clean.py for real values.")
 
     n_total = df.height
 
@@ -112,6 +116,17 @@ def main(config_path: Path | None = None) -> None:
             pct = 100.0 * n / n_total if n_total else 0
             summary_rows.append({
                 "Variable": "PAYER_TRANSITION",
+                "Category": str(val),
+                "N": _suppress(n),
+                "Pct": _suppress(int(round(pct))) if 1 <= n <= SMALL_CELL_THRESHOLD else f"{pct:.1f}",
+            })
+    # DUAL_ELIGIBLE (0/1)
+    if "DUAL_ELIGIBLE" in df.columns:
+        for val in (0, 1):
+            n = df.filter(pl.col("DUAL_ELIGIBLE") == val).height
+            pct = 100.0 * n / n_total if n_total else 0
+            summary_rows.append({
+                "Variable": "DUAL_ELIGIBLE",
                 "Category": str(val),
                 "N": _suppress(n),
                 "Pct": _suppress(int(round(pct))) if 1 <= n <= SMALL_CELL_THRESHOLD else f"{pct:.1f}",
@@ -270,6 +285,34 @@ def main(config_path: Path | None = None) -> None:
         print(f"  payer_transition_prevalence.csv")
     else:
         md_lines.append("## Payer transition prevalence")
+        md_lines.append("")
+        md_lines.append("(Column not present.)")
+        md_lines.append("")
+
+    # -------------------------------------------------------------------------
+    # Table 5: DUAL_ELIGIBLE prevalence
+    # -------------------------------------------------------------------------
+    if "DUAL_ELIGIBLE" in df.columns:
+        n_dual = df.filter(pl.col("DUAL_ELIGIBLE") == 1).height
+        n_not_dual = df.filter(pl.col("DUAL_ELIGIBLE") == 0).height
+        pct_dual = (100.0 * n_dual / n_total) if n_total else 0.0
+        md_lines.append("## Dual-eligible prevalence")
+        md_lines.append("")
+        md_lines.append("| Metric | Value |")
+        md_lines.append("|--------|-------|")
+        md_lines.append(f"| Patients dual-eligible (Medicare+Medicaid or code 14/141/142) | {flag_small_cell(n_dual)} |")
+        md_lines.append(f"| Patients not dual-eligible | {flag_small_cell(n_not_dual)} |")
+        md_lines.append(f"| Total N | {flag_small_cell(n_total)} |")
+        md_lines.append(f"| % dual-eligible | {flag_small_cell(int(round(pct_dual)))} |")
+        md_lines.append("")
+        dual_df = pl.DataFrame({
+            "Metric": ["N_dual_eligible", "N_not_dual_eligible", "N_total", "Pct_dual_eligible"],
+            "Value": [_suppress(n_dual), _suppress(n_not_dual), _suppress(n_total), _suppress(int(round(pct_dual)))],
+        })
+        dual_df.write_csv(reports_dir / "dual_eligible_prevalence.csv")
+        print(f"  dual_eligible_prevalence.csv")
+    else:
+        md_lines.append("## Dual-eligible prevalence")
         md_lines.append("")
         md_lines.append("(Column not present.)")
         md_lines.append("")
