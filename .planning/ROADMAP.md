@@ -565,6 +565,18 @@ Incorporate secondary payer into encounter payer logic: effective payer (primary
 
 ---
 
+### Phase 17: Dual Eligible as a Payer Category Level
+
+Make "Dual eligible" a **level** of each payer variable (Medicare, Medicaid, Dual eligible, Private, …). When an encounter is dual-eligible, assign category "Dual eligible" instead of Medicare/Medicaid.
+
+- **Plan:** [.planning/phases/17-dual-eligible-as-payer-level/17-01-PLAN.md](phases/17-dual-eligible-as-payer-level/17-01-PLAN.md)
+- **Research:** [.planning/phases/17-dual-eligible-as-payer-level/17-RESEARCH.md](phases/17-dual-eligible-as-payer-level/17-RESEARCH.md)
+- **Scope:** `encounter_payer_summary.py` — category = "Dual eligible" when dual_eligible for valid_enc, _payer_at_date, enc_chemo; `build_insurance_summary.py` PAYER_CATEGORY_ORDER; docs.
+- **Dependencies:** Phase 16
+- **Effort:** ~0.5 day
+
+---
+
 ### Phase 11: Remove XLSX Dependencies (Use CSV)
 
 **Goal:** Replace Outcomes.xlsx with Outcomes.csv; remove openpyxl dependency.

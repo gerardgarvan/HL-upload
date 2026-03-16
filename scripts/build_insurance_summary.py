@@ -25,6 +25,7 @@ from src.validate.structural import SMALL_CELL_THRESHOLD, flag_small_cell
 PAYER_CATEGORY_ORDER = [
     "Medicare",
     "Medicaid",
+    "Dual eligible",
     "Private",
     "Other government",
     "No payment / Self-pay",

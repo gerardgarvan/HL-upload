@@ -34,12 +34,13 @@
 
 ## 2. How payer categories are calculated
 
-Payer categories are derived from **effective payer** (see Section 1) using a single mapping in code: `_collapse_payer_category(code)` in `src/report/encounter_payer_summary.py`.
+Payer categories are derived from **effective payer** and **dual-eligible** status in `src/report/encounter_payer_summary.py` via `_payer_category_from_effective_and_dual()` and `_collapse_payer_category(code)`.
 
-Each non-missing payer **code** is mapped to one category by **prefix** (and a couple of exact codes), following the PCORnet typology:
+**Override:** When an encounter is **dual-eligible** (Medicare+Medicaid or code 14/141/142), the payer category for that encounter is **"Dual eligible"** (instead of Medicare or Medicaid). Otherwise the code is mapped by **prefix** (PCORnet typology):
 
-| If code... | Category |
-|------------|----------|
+| If encounter... | Category |
+|-----------------|----------|
+| **dual-eligible** (primary+secondary Medicare+Medicaid or code 14/141/142) | **Dual eligible** |
 | null, empty, or **NI, UN, OT**, or string **"UNKNOWN"** | **Unknown** |
 | **99** or **9999** | **Unavailable** |
 | starts with **1** (e.g. 1, 11, 12, 111) | **Medicare** |
@@ -50,7 +51,7 @@ Each non-missing payer **code** is mapped to one category by **prefix** (and a c
 | starts with **7** or **9** (but not 99/9999) (e.g. 71, 91) | **Other** |
 | anything else | **Other** |
 
-**Summary:** Categories are calculated by (1) taking the raw effective payer value, (2) applying the rules above (null/NI/UN/OT/UNKNOWN and 99/9999 first, then prefix rules), (3) returning one of: **Medicare, Medicaid, Private, Other government, No payment / Self-pay, Other, Unavailable, Unknown**. The same logic is used for every payer-derived variable. Only valid effective-payer encounters are used for primary payer, distinct categories, and transition; when used, their raw code is mapped to one of these categories.
+**Summary:** Possible category levels are **Medicare, Medicaid, Dual eligible, Private, Other government, No payment / Self-pay, Other, Unavailable, Unknown**. Dual-eligible encounters map to "Dual eligible"; all others use the table above. The same logic is used for every payer-derived variable (primary, at first DX, at first/last chemo, most frequent at chemo).
 
 ---
 

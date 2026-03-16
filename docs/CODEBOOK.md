@@ -133,7 +133,7 @@ See `docs/FLAG_CODES.md` for code sets.
 | `PAYER_TRANSITION` | Int8 | 1 if the patient has **more than one distinct payer category** across valid encounters (N_DISTINCT_PAYER_CATEGORIES &gt; 1); 0 otherwise. Based only on valid effective payer. |
 | `DUAL_ELIGIBLE` | Int8 | Patient-level: 1 if the patient has **at least one encounter** with encounter-level dual-eligible = 1 (Medicare+Medicaid or Medicaid+Medicare or primary/secondary in {14, 141, 142}); 0 otherwise. When PAYER_TYPE_SECONDARY is missing, DUAL_ELIGIBLE = 0. |
 
-**Payer category mapping** (PCORnet typology): 1x→Medicare, 2x→Medicaid, 5x/6x→Private, 3x/4x→Other government (including 41 = Corrections Federal), 8x→No payment / Self-pay, 7x/9x→Other, 99/9999→Unavailable. NI, UN, OT, empty, or "UNKNOWN"→Unknown. Only valid effective-payer encounters are used for primary payer, distinct categories, and transition; when used, their raw code is mapped to one of these categories.
+**Payer category mapping** (PCORnet typology): When an encounter is **dual-eligible** (Medicare+Medicaid or code 14/141/142), the payer category for that encounter is **"Dual eligible"**. Otherwise: 1x→Medicare, 2x→Medicaid, 5x/6x→Private, 3x/4x→Other government (including 41 = Corrections Federal), 8x→No payment / Self-pay, 7x/9x→Other, 99/9999→Unavailable. NI, UN, OT, empty, or "UNKNOWN"→Unknown. So possible category levels include **Medicare, Medicaid, Dual eligible, Private, Other government, No payment / Self-pay, Other, Unavailable, Unknown**. Only valid effective-payer encounters are used for primary payer, distinct categories, and transition; when used, dual-eligible encounters map to "Dual eligible" and others to the categories above.
 
 ---
 
