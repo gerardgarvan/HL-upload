@@ -536,8 +536,20 @@ Summarize ENCOUNTER at the patient level with emphasis on payer for insurance in
 
 - **Milestone:** [.planning/milestones/MILESTONE-ENCOUNTER-PAYER-SUMMARY.md](milestones/MILESTONE-ENCOUNTER-PAYER-SUMMARY.md)
 - **Plan:** [.planning/phases/14-encounter-payer-summary/14-01-PLAN.md](phases/14-encounter-payer-summary/14-01-PLAN.md)
-- **Scope:** N_ENCOUNTERS, N_ENCOUNTERS_WITH_PAYER, N_DISTINCT_PAYERS, PAYER_PRIMARY, PAYER_TRANSITION; `derived/encounter_payer_summary.parquet`
+- **Scope:** N_ENCOUNTERS, N_ENCOUNTERS_WITH_PAYER, N_DISTINCT_PAYER_CATEGORIES, PAYER_CATEGORY_PRIMARY, PAYER_CATEGORY_AT_FIRST_DX, PAYER_CATEGORY_AT_FIRST_CHEMO, PAYER_CATEGORY_AT_LAST_CHEMO, PAYER_CATEGORY_MOST_FREQUENT_AT_CHEMO, PAYER_TRANSITION; `derived/encounter_payer_summary.parquet`
 - **Effort:** ~1–1.5 days
+
+---
+
+### Phase 15: Insurance Summary Tables and Figures
+
+Produce summary tables and figures stratified by the new insurance (payer) variables for the HL insurance inequities study.
+
+- **Plan:** [.planning/phases/15-insurance-summary-tables-figures/15-01-PLAN.md](phases/15-insurance-summary-tables-figures/15-01-PLAN.md)
+- **Research:** [.planning/phases/15-insurance-summary-tables-figures/15-RESEARCH.md](phases/15-insurance-summary-tables-figures/15-RESEARCH.md)
+- **Scope:** `scripts/build_insurance_summary.py`; tables: counts by payer at first DX, at first chemo, cross-tab first DX vs first chemo, PAYER_TRANSITION prevalence; outputs: `reports/insurance_summary.md`, `reports/payer_*.csv`, `reports/figures/insurance_payer_at_first_dx.png`, `insurance_payer_at_first_chemo.png`; all counts use `flag_small_cell` / `_suppress` (HIPAA).
+- **Dependencies:** Phase 14
+- **Effort:** ~1 day
 
 ---
 
