@@ -1,6 +1,7 @@
 """Build insurance summary tables and figures from encounter-payer summary (Phase 15).
 
 Reads derived/encounter_payer_summary.parquet, produces:
+- reports/encounter_payer_summary.csv (counts and percentages per category for each insurance variable; _suppress)
 - reports/insurance_summary.md (four tables with flag_small_cell)
 - reports/payer_at_first_dx.csv, payer_at_first_chemo.csv, payer_crosstab_*.csv, payer_transition_prevalence.csv (_suppress)
 - reports/figures/insurance_payer_at_first_dx.png, insurance_payer_at_first_chemo.png (bars; 1–10 excluded)
@@ -19,7 +20,7 @@ import polars as pl
 
 from src.load.config import load_config
 from src.report.quality_report import _suppress
-from src.validate.structural import flag_small_cell
+from src.validate.structural import SMALL_CELL_THRESHOLD, flag_small_cell
 
 PAYER_CATEGORY_ORDER = [
     "Medicare",
@@ -74,6 +75,50 @@ def main(config_path: Path | None = None) -> None:
 
     print(f"\n  derived_dir: {derived_dir}")
     print(f"  Rows: {df.height:,}")
+
+    n_total = df.height
+
+    # -------------------------------------------------------------------------
+    # encounter_payer_summary.csv: counts and percentages for each insurance variable
+    # -------------------------------------------------------------------------
+    INSURANCE_VARS = [
+        "PAYER_CATEGORY_PRIMARY",
+        "PAYER_CATEGORY_AT_FIRST_DX",
+        "PAYER_CATEGORY_AT_FIRST_CHEMO",
+        "PAYER_CATEGORY_AT_LAST_CHEMO",
+        "PAYER_CATEGORY_MOST_FREQUENT_AT_CHEMO",
+    ]
+    summary_rows: list[dict] = []
+    for var in INSURANCE_VARS:
+        if var not in df.columns:
+            continue
+        normalized = df.with_columns(_normalize_payer(df[var]).alias("_cat"))
+        grp = normalized.group_by("_cat").agg(pl.len().alias("N"))
+        grp = grp.with_columns((100.0 * pl.col("N") / n_total).alias("Pct"))
+        grp = _order_categories(grp.rename({"_cat": "Category"}), "Category")
+        for row in grp.iter_rows(named=True):
+            n = row["N"]
+            pct = row["Pct"]
+            summary_rows.append({
+                "Variable": var,
+                "Category": row["Category"],
+                "N": _suppress(n),
+                "Pct": _suppress(int(round(pct))) if 1 <= n <= SMALL_CELL_THRESHOLD else f"{pct:.1f}",
+            })
+    # PAYER_TRANSITION (0/1)
+    if "PAYER_TRANSITION" in df.columns:
+        for val in (0, 1):
+            n = df.filter(pl.col("PAYER_TRANSITION") == val).height
+            pct = 100.0 * n / n_total if n_total else 0
+            summary_rows.append({
+                "Variable": "PAYER_TRANSITION",
+                "Category": str(val),
+                "N": _suppress(n),
+                "Pct": _suppress(int(round(pct))) if 1 <= n <= SMALL_CELL_THRESHOLD else f"{pct:.1f}",
+            })
+    if summary_rows:
+        pl.DataFrame(summary_rows).write_csv(reports_dir / "encounter_payer_summary.csv")
+        print(f"  encounter_payer_summary.csv")
 
     # Normalize payer columns for tables
     for col in ["PAYER_CATEGORY_AT_FIRST_DX", "PAYER_CATEGORY_AT_FIRST_CHEMO"]:
@@ -243,8 +288,6 @@ def main(config_path: Path | None = None) -> None:
     except ImportError:
         print("  matplotlib not available; skipping figures.")
     else:
-        from src.validate.structural import SMALL_CELL_THRESHOLD
-
         def _plot_payer_bars(counts_df: pl.DataFrame, category_col: str, title: str, out_path: Path) -> None:
             # Exclude categories with 1 <= N <= 10 for HIPAA
             safe = counts_df.filter(
