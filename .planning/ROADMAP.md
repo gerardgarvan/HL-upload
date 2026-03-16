@@ -553,6 +553,18 @@ Produce summary tables and figures stratified by the new insurance (payer) varia
 
 ---
 
+### Phase 16: Secondary Payer and Dual-Eligible
+
+Incorporate secondary payer into encounter payer logic: effective payer (primary with sentinel fallback to secondary), encounter- and patient-level dual-eligible flags, all payer variables from effective payer.
+
+- **Plan:** [.planning/phases/16-secondary-payer-dual-eligible/16-01-PLAN.md](phases/16-secondary-payer-dual-eligible/16-01-PLAN.md)
+- **Research:** [.planning/phases/16-secondary-payer-dual-eligible/16-RESEARCH.md](phases/16-secondary-payer-dual-eligible/16-RESEARCH.md)
+- **Scope:** `src/report/encounter_payer_summary.py` — effective_payer, sentinel fallback, dual_eligible (14/141/142 or Medicare+Medicaid); patient-level DUAL_ELIGIBLE in `derived/encounter_payer_summary.parquet`; docs CODEBOOK and PAYER_VARIABLES_AND_CATEGORIES.
+- **Dependencies:** Phase 15
+- **Effort:** ~1 day
+
+---
+
 ### Phase 11: Remove XLSX Dependencies (Use CSV)
 
 **Goal:** Replace Outcomes.xlsx with Outcomes.csv; remove openpyxl dependency.

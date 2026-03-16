@@ -107,26 +107,33 @@ See `docs/FLAG_CODES.md` for code sets.
 
 ---
 
-## 6a. Encounter-Payer Summary (Phase 14)
+## 6a. Encounter-Payer Summary (Phase 14, 16)
 
 **Source:** `src/report/encounter_payer_summary.py` — `build_encounter_payer_summary()`  
 **Output:** `derived/encounter_payer_summary.parquet` (one row per patient with encounters **who has ENROLLMENT**)
 
-Scope: Only patients with at least one ENROLLMENT record. Payer classified into categories via PCORnet typology prefix.
+**Scope:** Only patients with at least one ENROLLMENT record. All payer fields use **effective payer** per encounter (see below), mapped to categories via PCORnet typology.
 
-| Variable | Type | Creation logic |
-|----------|------|----------------|
-| `N_ENCOUNTERS` | Int64 | Count of ENCOUNTER rows per patient |
-| `N_ENCOUNTERS_WITH_PAYER` | Int64 | Count of rows where PAYER_TYPE_PRIMARY is non-null, non-empty, and not in {NI, UN, OT} |
-| `N_DISTINCT_PAYER_CATEGORIES` | Int64 | Count of distinct payer categories per patient |
-| `PAYER_CATEGORY_PRIMARY` | String | Most frequent payer category; null if none. Categories: Medicare, Medicaid, Private, Other government, No payment / Self-pay, Other, Unavailable, Unknown |
-| `PAYER_CATEGORY_AT_FIRST_DX` | String | Payer category from encounter closest to first HL diagnosis (within ±90 days); null if no HL DX or no encounter |
-| `PAYER_CATEGORY_AT_FIRST_CHEMO` | String | Payer category from encounter closest to first chemo date (within ±90 days); chemo from TUMOR_REGISTRY DT_CHEMO/CHEMO_START_DATE_SUMMARY or PRESCRIBING RX_ORDER_DATE |
-| `PAYER_CATEGORY_AT_LAST_CHEMO` | String | Payer category from encounter closest to last chemo date (within ±90 days) |
-| `PAYER_CATEGORY_MOST_FREQUENT_AT_CHEMO` | String | Most frequent payer category among encounters with ADMIT_DATE in [first chemo, last chemo]; null if no chemo |
-| `PAYER_TRANSITION` | Int8 | 1 if N_DISTINCT_PAYER_CATEGORIES &gt; 1; 0 otherwise |
+**Effective payer:** Per encounter, the payer used for all summary variables is: **primary if valid** (non-sentinel), **else secondary if valid** (when ENCOUNTER has PAYER_TYPE_SECONDARY), **else null**. **Sentinel** = null, empty string, NI, UN, OT. Optional: 99 and 9999 can be treated as sentinel via `INCLUDE_99_AS_SENTINEL` (default: False; not treated as sentinel). When PAYER_TYPE_SECONDARY is missing from ENCOUNTER schema, effective payer = primary only (with the same valid check).
 
-**Payer category mapping** (PCORnet typology): 1x→Medicare, 2x→Medicaid, 5x/6x→Private, 3x/4x→Other government, 8x→No payment / Self-pay, 7x/9x→Other, 99/9999→Unavailable, NI/UN/OT→Unknown.
+**Valid payer:** Effective payer is non-null, non-empty, and not in the sentinel set. Encounters whose effective payer is sentinel or null are excluded from payer category logic.
+
+**Dual-eligible:** Encounter-level dual-eligible = 1 when (a) primary is Medicare and secondary is Medicaid, or (b) primary is Medicaid and secondary is Medicare, or (c) primary or secondary is one of codes 14, 141, 142 (PCORnet dual-eligibility codes). Code 41 = Corrections Federal (Other government), not dual-eligible. When PAYER_TYPE_SECONDARY is missing, encounter-level dual-eligible = 0.
+
+| Variable | Type | How it is calculated |
+|----------|------|------------------------|
+| `N_ENCOUNTERS` | Int64 | Total number of ENCOUNTER rows per patient (all encounters, regardless of payer). |
+| `N_ENCOUNTERS_WITH_PAYER` | Int64 | Number of encounters where **effective payer** is valid (non-null, non-empty, not sentinel). |
+| `N_DISTINCT_PAYER_CATEGORIES` | Int64 | Among **valid** encounters only: count of distinct payer **categories** per patient after mapping effective payer to category. Sentinel/missing encounters are excluded; if a patient has only sentinel/missing, this is 0. |
+| `PAYER_CATEGORY_PRIMARY` | String | Among **valid** encounters only: the payer **category** that appears most often (mode). Each valid effective payer is mapped to a category; the category with the highest encounter count is primary. Null if the patient has no valid payer on any encounter. Ties: first after sort by count descending. |
+| `PAYER_CATEGORY_AT_FIRST_DX` | String | Payer category from the **single encounter** whose ADMIT_DATE is closest to the patient’s first HL diagnosis date, within ±90 days. First HL DX comes from DIAGNOSIS (HL codes); **Effective payer** from that encounter is mapped to category. Null if no HL diagnosis, no encounter, or no encounter within ±90 days. |
+| `PAYER_CATEGORY_AT_FIRST_CHEMO` | String | Payer category from the encounter whose ADMIT_DATE is closest to the patient’s **first chemo date**, within ±90 days. **Effective payer** from that encounter is mapped to category. Null if no chemo date or no qualifying encounter. |
+| `PAYER_CATEGORY_AT_LAST_CHEMO` | String | Payer category from the encounter whose ADMIT_DATE is closest to the patient’s **last chemo date**, within ±90 days. **Effective payer** from that encounter is mapped to category. Null if no chemo or no qualifying encounter. |
+| `PAYER_CATEGORY_MOST_FREQUENT_AT_CHEMO` | String | Among encounters with ADMIT_DATE between the patient’s first and last chemo date (inclusive), the payer **category** that appears most often (mode). Only encounters with valid **effective payer** in that window are used. Null if no chemo dates or no valid payer in that window. |
+| `PAYER_TRANSITION` | Int8 | 1 if the patient has **more than one distinct payer category** across valid encounters (N_DISTINCT_PAYER_CATEGORIES &gt; 1); 0 otherwise. Based only on valid effective payer. |
+| `DUAL_ELIGIBLE` | Int8 | Patient-level: 1 if the patient has **at least one encounter** with encounter-level dual-eligible = 1 (Medicare+Medicaid or Medicaid+Medicare or primary/secondary in {14, 141, 142}); 0 otherwise. When PAYER_TYPE_SECONDARY is missing, DUAL_ELIGIBLE = 0. |
+
+**Payer category mapping** (PCORnet typology): 1x→Medicare, 2x→Medicaid, 5x/6x→Private, 3x/4x→Other government (including 41 = Corrections Federal), 8x→No payment / Self-pay, 7x/9x→Other, 99/9999→Unavailable. NI, UN, OT, empty, or "UNKNOWN"→Unknown. Only valid effective-payer encounters are used for primary payer, distinct categories, and transition; when used, their raw code is mapped to one of these categories.
 
 ---
 

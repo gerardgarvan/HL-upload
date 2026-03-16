@@ -23,6 +23,11 @@ from src.validate.cohort import (
 from src.validate.structural import PATID_COL, TUMOR_REGISTRY_TABLES
 
 INVALID_PAYER: set[str] = {"NI", "UN", "OT"}
+# Sentinel = values that trigger fallback to secondary when used as primary (null, "", NI, UN, OT).
+# Optional: 99/9999 — set True to treat as sentinel; document in CODEBOOK/PAYER_VARIABLES_AND_CATEGORIES.
+INCLUDE_99_AS_SENTINEL: bool = False
+
+DUAL_ELIGIBLE_CODES: tuple[str, ...] = ("14", "141", "142")  # PCORnet; 41 = Corrections Federal, not dual-eligible
 
 # Payer code → category (PCORnet typology: 1=Medicare, 2=Medicaid, 5/6=Private, etc.)
 def _collapse_payer_category(code: str) -> str:
@@ -47,12 +52,21 @@ def _collapse_payer_category(code: str) -> str:
     return "Other"
 
 
-def _valid_payer_expr() -> pl.Expr:
-    """True when PAYER_TYPE_PRIMARY is usable (not null, not empty, not NI/UN/OT)."""
+def _sentinel_set() -> set[str]:
+    """Values treated as sentinel (invalid) for effective payer; triggers fallback to secondary."""
+    s = set(INVALID_PAYER)
+    if INCLUDE_99_AS_SENTINEL:
+        s = s | {"99", "9999"}
+    return s
+
+
+def _valid_payer_expr(col: str) -> pl.Expr:
+    """True when the payer column is usable (non-null, non-empty, not in sentinel set)."""
+    sentinel = list(_sentinel_set())
     return (
-        pl.col("PAYER_TYPE_PRIMARY").is_not_null()
-        & (pl.col("PAYER_TYPE_PRIMARY") != "")
-        & ~pl.col("PAYER_TYPE_PRIMARY").is_in(INVALID_PAYER)
+        pl.col(col).is_not_null()
+        & (pl.col(col).cast(pl.Utf8) != "")
+        & ~pl.col(col).cast(pl.Utf8).is_in(sentinel)
     )
 
 
@@ -138,21 +152,72 @@ def _get_chemo_dates(table_map: dict[str, Path], ids: pl.Series) -> pl.DataFrame
     )
 
 
+def _effective_payer_and_dual_exprs(
+    has_secondary: bool,
+) -> tuple[pl.Expr, pl.Expr, pl.Expr]:
+    """Build effective_payer, _valid, and dual_eligible expressions for ENCOUNTER scan."""
+    valid_primary = _valid_payer_expr("PAYER_TYPE_PRIMARY")
+    if has_secondary:
+        valid_secondary = _valid_payer_expr("PAYER_TYPE_SECONDARY")
+        effective_payer = (
+            pl.when(valid_primary)
+            .then(pl.col("PAYER_TYPE_PRIMARY").cast(pl.Utf8))
+            .when(valid_secondary)
+            .then(pl.col("PAYER_TYPE_SECONDARY").cast(pl.Utf8))
+            .otherwise(pl.lit(None).cast(pl.Utf8))
+        )
+        p = pl.col("PAYER_TYPE_PRIMARY").cast(pl.Utf8).fill_null("")
+        s = pl.col("PAYER_TYPE_SECONDARY").cast(pl.Utf8).fill_null("")
+        primary_medicare = p.str.starts_with("1")
+        primary_medicaid = p.str.starts_with("2")
+        secondary_medicare = s.str.starts_with("1")
+        secondary_medicaid = s.str.starts_with("2")
+        primary_dual = p.is_in(list(DUAL_ELIGIBLE_CODES))
+        secondary_dual = s.is_in(list(DUAL_ELIGIBLE_CODES))
+        dual_eligible = (
+            (primary_medicare & secondary_medicaid)
+            | (primary_medicaid & secondary_medicare)
+            | primary_dual
+            | secondary_dual
+        ).cast(pl.Int8).fill_null(0)
+    else:
+        effective_payer = (
+            pl.when(valid_primary)
+            .then(pl.col("PAYER_TYPE_PRIMARY").cast(pl.Utf8))
+            .otherwise(pl.lit(None).cast(pl.Utf8))
+        )
+        dual_eligible = pl.lit(0).cast(pl.Int8)
+    sentinel = list(_sentinel_set())
+    _valid = (
+        effective_payer.is_not_null()
+        & (effective_payer != "")
+        & ~effective_payer.is_in(sentinel)
+    )
+    return effective_payer.alias("effective_payer"), _valid.alias("_valid"), dual_eligible.alias("dual_eligible")
+
+
 def _payer_at_date(
     enc_path: Path,
     patients: pl.DataFrame,
     date_col: str,
     window_days: int = 90,
 ) -> pl.DataFrame:
-    """PAYER_TYPE_PRIMARY from encounter closest to patients[date_col] within ±window_days."""
+    """Effective payer from encounter closest to patients[date_col] within ±window_days."""
     enc_schema = pl.read_parquet_schema(enc_path)
-    if "ADMIT_DATE" not in enc_schema or "PAYER_TYPE_PRIMARY" not in enc_schema:
+    if "ADMIT_DATE" not in enc_schema.names() or "PAYER_TYPE_PRIMARY" not in enc_schema.names():
         return patients.select(PATID_COL).with_columns(pl.lit(None).cast(pl.String).alias("_raw_payer"))
+    has_secondary = "PAYER_TYPE_SECONDARY" in enc_schema.names()
+    enc_cols = [PATID_COL, "ADMIT_DATE", "PAYER_TYPE_PRIMARY"]
+    if has_secondary:
+        enc_cols.append("PAYER_TYPE_SECONDARY")
+    eff_expr, valid_expr, _ = _effective_payer_and_dual_exprs(has_secondary)
     enc = (
         pl.scan_parquet(enc_path)
         .with_columns(pl.col(PATID_COL).cast(pl.String))
         .filter(pl.col(PATID_COL).is_in(patients[PATID_COL].implode()))
-        .select(PATID_COL, "ADMIT_DATE", "PAYER_TYPE_PRIMARY")
+        .select(enc_cols)
+        .with_columns(eff_expr)
+        .select(PATID_COL, "ADMIT_DATE", "effective_payer")
         .collect()
     )
     if enc.is_empty():
@@ -173,7 +238,7 @@ def _payer_at_date(
         .first()
     )
     return patients.select(PATID_COL).join(
-        closest.select(PATID_COL, pl.col("PAYER_TYPE_PRIMARY").alias("_raw_payer")),
+        closest.select(PATID_COL, pl.col("effective_payer").alias("_raw_payer")),
         on=PATID_COL,
         how="left",
     )
@@ -205,6 +270,7 @@ def build_encounter_payer_summary(table_map: dict[str, Path]) -> pl.DataFrame:
         "PAYER_CATEGORY_AT_LAST_CHEMO": pl.String,
         "PAYER_CATEGORY_MOST_FREQUENT_AT_CHEMO": pl.String,
         "PAYER_TRANSITION": pl.Int8,
+        "DUAL_ELIGIBLE": pl.Int8,
     }
 
     enc_path = table_map.get("ENCOUNTER")
@@ -212,8 +278,9 @@ def build_encounter_payer_summary(table_map: dict[str, Path]) -> pl.DataFrame:
         return pl.DataFrame(schema=empty_schema)
 
     schema = pl.read_parquet_schema(enc_path)
-    if "PAYER_TYPE_PRIMARY" not in schema or PATID_COL not in schema:
+    if "PAYER_TYPE_PRIMARY" not in schema.names() or PATID_COL not in schema.names():
         return pl.DataFrame(schema=empty_schema)
+    has_secondary = "PAYER_TYPE_SECONDARY" in schema.names()
 
     # Enrolled IDs only
     enr_path = table_map.get("ENROLLMENT")
@@ -231,28 +298,34 @@ def build_encounter_payer_summary(table_map: dict[str, Path]) -> pl.DataFrame:
     else:
         filter_ids = None
 
+    enc_cols = [PATID_COL, "ADMIT_DATE", "PAYER_TYPE_PRIMARY"]
+    if has_secondary:
+        enc_cols.append("PAYER_TYPE_SECONDARY")
+    eff_expr, valid_expr, dual_expr = _effective_payer_and_dual_exprs(has_secondary)
     enc = (
         pl.scan_parquet(enc_path)
         .with_columns(pl.col(PATID_COL).cast(pl.String))
-        .with_columns(_valid_payer_expr().alias("_valid"))
+        .select(enc_cols)
+        .with_columns([eff_expr, valid_expr, dual_expr])
     )
     if filter_ids is not None:
         enc = enc.filter(pl.col(PATID_COL).is_in(filter_ids))
 
-    # Base counts
+    # Base counts and patient-level DUAL_ELIGIBLE (max of encounter-level dual_eligible)
     base = (
         enc.group_by(PATID_COL)
         .agg(
             pl.len().alias("N_ENCOUNTERS"),
             pl.col("_valid").sum().cast(pl.Int64).alias("N_ENCOUNTERS_WITH_PAYER"),
+            pl.col("dual_eligible").max().alias("DUAL_ELIGIBLE"),
         )
         .collect()
     )
 
-    # Add PAYER_CATEGORY from PAYER_TYPE_PRIMARY (valid rows only)
+    # Add PAYER_CATEGORY from effective_payer (valid rows only)
     valid_enc = (
         enc.filter(pl.col("_valid"))
-        .select(PATID_COL, "PAYER_TYPE_PRIMARY")
+        .select(PATID_COL, "effective_payer")
         .collect()
     )
 
@@ -263,7 +336,7 @@ def build_encounter_payer_summary(table_map: dict[str, Path]) -> pl.DataFrame:
         )
     else:
         valid_enc = valid_enc.with_columns(
-            pl.col("PAYER_TYPE_PRIMARY")
+            pl.col("effective_payer")
             .map_batches(
                 lambda s: pl.Series(
                     [_collapse_payer_category(v) for v in s], dtype=pl.String
@@ -356,12 +429,17 @@ def build_encounter_payer_summary(table_map: dict[str, Path]) -> pl.DataFrame:
             how="left",
         )
 
-        # Most frequent payer at chemo visits: encounters with ADMIT_DATE in [first_chemo, last_chemo]
+        # Most frequent payer at chemo visits: encounters with ADMIT_DATE in [first_chemo, last_chemo]; use effective_payer
+        enc_chemo_cols = [PATID_COL, "ADMIT_DATE", "PAYER_TYPE_PRIMARY"]
+        if has_secondary:
+            enc_chemo_cols.append("PAYER_TYPE_SECONDARY")
         enc_chemo = (
             pl.scan_parquet(enc_path)
             .with_columns(pl.col(PATID_COL).cast(pl.String))
             .filter(pl.col(PATID_COL).is_in(chemo[PATID_COL].implode()))
-            .select(PATID_COL, "ADMIT_DATE", "PAYER_TYPE_PRIMARY")
+            .select(enc_chemo_cols)
+            .with_columns([eff_expr, valid_expr])
+            .select(PATID_COL, "ADMIT_DATE", "effective_payer", "_valid")
             .collect()
         )
         enc_chemo = enc_chemo.join(
@@ -372,9 +450,7 @@ def build_encounter_payer_summary(table_map: dict[str, Path]) -> pl.DataFrame:
         enc_chemo = enc_chemo.filter(
             (pl.col("ADMIT_DATE") >= pl.col("FIRST_CHEMO_DATE"))
             & (pl.col("ADMIT_DATE") <= pl.col("LAST_CHEMO_DATE"))
-            & pl.col("PAYER_TYPE_PRIMARY").is_not_null()
-            & (pl.col("PAYER_TYPE_PRIMARY") != "")
-            & ~pl.col("PAYER_TYPE_PRIMARY").is_in(INVALID_PAYER)
+            & pl.col("_valid")
         )
         if enc_chemo.is_empty():
             base = base.with_columns(
@@ -382,7 +458,7 @@ def build_encounter_payer_summary(table_map: dict[str, Path]) -> pl.DataFrame:
             )
         else:
             enc_chemo = enc_chemo.with_columns(
-                pl.col("PAYER_TYPE_PRIMARY")
+                pl.col("effective_payer")
                 .map_batches(
                     lambda s: pl.Series([_collapse_payer_category(v) for v in s], dtype=pl.String)
                 )
@@ -404,6 +480,7 @@ def build_encounter_payer_summary(table_map: dict[str, Path]) -> pl.DataFrame:
             pl.lit(None).cast(pl.String).alias("PAYER_CATEGORY_MOST_FREQUENT_AT_CHEMO"),
         )
 
+    base = base.with_columns(pl.col("DUAL_ELIGIBLE").fill_null(0).cast(pl.Int8))
     return base.select(
         PATID_COL,
         "N_ENCOUNTERS",
@@ -415,4 +492,5 @@ def build_encounter_payer_summary(table_map: dict[str, Path]) -> pl.DataFrame:
         "PAYER_CATEGORY_AT_LAST_CHEMO",
         "PAYER_CATEGORY_MOST_FREQUENT_AT_CHEMO",
         "PAYER_TRANSITION",
+        "DUAL_ELIGIBLE",
     )
