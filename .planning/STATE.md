@@ -50,6 +50,7 @@ Progress: [█████░░░░░] 45% (Phase 1-2 complete, Phase 3: 3/6
 | Phase 03-test-coverage-fragile-areas P04 | 3 | 2 tasks | 3 files |
 | Phase 03 P01 | 3 | 2 tasks | 2 files |
 | Phase 03 P03 | 5 | 3 tasks | 5 files |
+| Phase 03-test-coverage-fragile-areas P02 | 6 min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -94,6 +95,8 @@ Recent decisions affecting current work:
 - [Phase 03]: AUDIT-004 RESOLVED: Polars is_duplicated() treats null == null (nulls DO match duplicates)
 - [Phase 03]: AUDIT-007 RESOLVED: Suppression consistency verified - both functions use DEFAULT_THRESHOLD=10
 - [Phase 03]: Test strategy: structural validation + spot-checks, not exact value matching (avoids brittleness)
+- [Phase 03-test-coverage-fragile-areas]: Parametrized tests for exhaustive edge case coverage — Enables testing all format/case combinations without test duplication
+- [Phase 03-test-coverage-fragile-areas]: Document AUDIT items with rationale rather than changing validated behavior
 
 ### Pending Todos
 
