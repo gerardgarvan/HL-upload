@@ -36,8 +36,9 @@ from src.clean.harmonize import (
     flag_encounters_outside_enrollment,
     flag_no_enrollment,
 )
-from src.load.config import load_config
+from src.load.config import load_and_validate_config
 from src.load.schema import parse_datastructure, resolve_table_name
+from src.validate.checkpoint import validate_row_count, validate_no_vanish, CheckpointError
 from src.validate.structural import (
     PATID_COL,
     SMALL_CELL_THRESHOLD,
@@ -504,7 +505,7 @@ def main(config_path: Path | None = None) -> None:
     overall_start = time.time()
 
     # ── Step 1: Load config ──────────────────────────────────────────────
-    paths = load_config(config_path)
+    paths = load_and_validate_config(config_path)
     print(f"\n  data_root:    {paths.data_root}")
     print(f"  parquet_dir:  {paths.parquet_dir}")
 
@@ -596,7 +597,22 @@ def main(config_path: Path | None = None) -> None:
             df = add_provider_flags(df)
 
         # (i) Write flagged Parquet back
+        input_row_count = df.height  # Store input count before write
         stats = write_cleaned(df, pq_path)
+
+        # Row count validation: dedup may reduce rows, but table shouldn't vanish
+        try:
+            validate_no_vanish(
+                df,
+                phase="clean",
+                table=table_name,
+                min_rows=1,  # Table should not become empty after cleaning
+            )
+        except CheckpointError as e:
+            print(f"\n  [FATAL] {table_name} checkpoint failed — table vanished after cleaning")
+            print(f"  {e}")
+            print("\n  Stopping — cannot continue after checkpoint failure.")
+            sys.exit(1)
 
         # (j) Count rows with any Phase 5 flag
         flag_cols = [c for c in df.columns if c in CLEAN_FLAG_COLS or c.startswith(CLEAN_FLAG_PREFIX)]

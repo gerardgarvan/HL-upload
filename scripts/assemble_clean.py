@@ -22,8 +22,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.clean.outcomes_flags import add_modality_flags
-from src.load.config import load_config
+from src.load.config import load_and_validate_config
 from src.load.schema import parse_datastructure, resolve_table_name
+from src.validate.checkpoint import validate_no_vanish, CheckpointError
 from src.report.encounter_payer_summary import build_encounter_payer_summary
 from src.report.quality_report import (
     aggregate_dq_metrics,
@@ -90,7 +91,7 @@ def main(config_path: Path | None = None) -> None:
     print("HL ASSEMBLE CLEAN — Parquet Copy, Derived, Reports")
     print("=" * 60)
 
-    paths = load_config(config_path)
+    paths = load_and_validate_config(config_path)
     print(f"\n  parquet_dir: {paths.parquet_dir}")
 
     _, table_filenames = parse_datastructure(paths.datastructure_path)
@@ -135,12 +136,32 @@ def main(config_path: Path | None = None) -> None:
     print(f"  Rows: {patient_df.height:,}")
     print(f"  Written: {patient_path}")
 
+    # Validate patient_level.parquet has expected structure
+    try:
+        patient_df_check = pl.read_parquet(patient_path)
+        validate_no_vanish(patient_df_check, phase="assemble", table="patient_level", min_rows=1)
+        print(f"  [CHECKPOINT PASS] patient_level.parquet: {patient_df_check.height} patients")
+    except CheckpointError as e:
+        print(f"\n  [FATAL] patient_level.parquet checkpoint failed")
+        print(f"  {e}")
+        print("\n  Stopping — cannot continue after checkpoint failure.")
+        sys.exit(1)
+
     # Encounter-payer summary (Phase 14)
     enc_summary = build_encounter_payer_summary(table_map)
     if not enc_summary.is_empty():
         enc_path = derived_dir / "encounter_payer_summary.parquet"
         enc_summary.write_parquet(enc_path, compression="snappy")
         print(f"  encounter_payer_summary.parquet -> {enc_path} ({enc_summary.height:,} rows)")
+
+        # Validate encounter_payer_summary output
+        try:
+            validate_no_vanish(enc_summary, phase="assemble", table="encounter_payer_summary", min_rows=1)
+        except CheckpointError as e:
+            print(f"\n  [FATAL] encounter_payer_summary.parquet checkpoint failed")
+            print(f"  {e}")
+            print("\n  Stopping — cannot continue after checkpoint failure.")
+            sys.exit(1)
     else:
         print("  encounter_payer_summary: SKIP (no ENCOUNTER data)")
 

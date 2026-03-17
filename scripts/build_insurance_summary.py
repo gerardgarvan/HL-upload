@@ -18,8 +18,9 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import polars as pl
 
-from src.load.config import load_config
+from src.load.config import load_and_validate_config
 from src.report.suppression import suppress as _suppress, DEFAULT_THRESHOLD as SMALL_CELL_THRESHOLD, flag_small_cell
+from src.validate.checkpoint import validate_no_vanish, CheckpointError
 
 PAYER_CATEGORY_ORDER = [
     "Medicare",
@@ -108,7 +109,7 @@ def main(config_path: Path | None = None) -> None:
     print("HL INSURANCE SUMMARY — Tables and Figures")
     print("=" * 60)
 
-    paths = load_config(config_path)
+    paths = load_and_validate_config(config_path)
     derived_dir = paths.derived_dir
     reports_dir = PROJECT_ROOT / "reports"
     figures_dir = reports_dir / "figures"
@@ -123,6 +124,15 @@ def main(config_path: Path | None = None) -> None:
     if df.is_empty():
         print("encounter_payer_summary.parquet missing or empty; skipping.")
         sys.exit(0)
+
+    # Validate input parquet exists and isn't empty
+    try:
+        validate_no_vanish(df, phase="insurance", table="encounter_payer_summary", min_rows=1)
+    except CheckpointError as e:
+        print(f"\n  [FATAL] encounter_payer_summary.parquet checkpoint failed")
+        print(f"  {e}")
+        print("\n  Stopping — input validation failed.")
+        sys.exit(1)
 
     print(f"\n  derived_dir: {derived_dir}")
     print(f"  Rows: {df.height:,}")
