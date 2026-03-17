@@ -570,6 +570,46 @@ MASKED_BIRTH_DATE = date(1900, 1, 1)
 
 ---
 
+## Phase 3 Resolutions
+
+**Resolved:** 2026-03-17 (Phase 3: Test Coverage for Fragile Areas)
+
+| Item | Status | Resolution | Evidence |
+|------|--------|------------|----------|
+| AUDIT-001 | DOCUMENTED | INCLUDE_99_AS_SENTINEL behavior tested in both modes; defaults to False (99→Unavailable category, no fallback) | tests/test_report/test_payer_logic.py::test_include_99_as_sentinel_flag |
+| AUDIT-002 | VALIDATED | Date detection thresholds (30% name+value, 50% value-only) tested with edge cases; appropriate for PCORnet data | tests/test_load/test_date_parsing.py::test_detect_date_columns_mixed_formats |
+| AUDIT-003 | DEFER TO PHASE 4 | LAB_RESULT_CM table name aliasing requires production schema check; add alias resolution if mismatch confirmed | N/A (infrastructure work) |
+| AUDIT-004 | VALIDATED | Null key behavior tested; confirmed nulls DO match in Polars is_duplicated() | tests/test_clean/test_dedup.py::test_flag_duplicates_null_keys_match |
+| AUDIT-005 | VERIFIED CORRECT | Dual-eligible detection correctly checks primary codes (14/141/142) even when secondary is null | tests/test_report/test_payer_logic.py::test_dual_eligible_detection_with_null_secondary |
+| AUDIT-006 | DEFER TO PHASE 4 | Pandas dependency in outcomes_flags.py to be migrated to Polars | N/A (refactor work) |
+| AUDIT-007 | DOCUMENTED | Suppression strategy documented: suppress() for CSV (PHI), flag_small_cell() for markdown (internal) | tests/test_report/test_suppression.py::test_suppression_consistency |
+| AUDIT-008 | DEFER TO PHASE 4 | src/clean/validate/ duplication to be audited and consolidated | N/A (refactor work) |
+| AUDIT-009 | VALIDATED | Parse failure rate tracked in convert_date_column() stats dict | tests/test_load/test_date_parsing.py::test_convert_date_column_invalid_handling |
+| AUDIT-010 | DOCUMENTED | VITAL dedup key missing vital-type discriminator; same-day multi-vital flagged incorrectly; requires schema investigation | tests/test_clean/test_dedup.py::test_flag_duplicates_vital_key |
+| AUDIT-011 | DEFER TO PHASE 4 | Logging framework (replace print()) | N/A (infrastructure work) |
+| AUDIT-012 | DEFER TO PHASE 4 | Incremental conversion optimization | N/A (performance work) |
+| AUDIT-013 | DOCUMENTED | Partner abbreviations (AMS, UMI, FLM, VRT) tested; production validation needed | tests/test_clean/test_harmonize.py::test_partner_flags_constants |
+| AUDIT-014 | VALIDATED | Outcomes.csv schema validation added to load_outcomes_code_lookup() | tests/test_clean/test_outcomes_flags.py::test_load_outcomes_code_lookup_missing_column_fail |
+| AUDIT-015 | DEFER TO PHASE 4 | SCT_CPTS constant renaming (includes radiation CPTs) | N/A (refactor work) |
+| AUDIT-016 | DEFER TO FUTURE | VITAL/LAB range validation; requires distribution analysis | N/A (data analysis work) |
+| AUDIT-017 | DEFER TO FUTURE | 30-day payer window sensitivity analysis | N/A (analysis work) |
+| AUDIT-018 | DOCUMENTED | 1900-01-01 births assumed masked values (HIPAA de-identification) | tests/test_load/test_date_parsing.py::test_convert_date_column_boundary_dates |
+
+**Phase 3 Summary:**
+- VERIFIED CORRECT: 1 item (AUDIT-005)
+- VALIDATED/DOCUMENTED: 8 items (AUDIT-001, AUDIT-002, AUDIT-004, AUDIT-007, AUDIT-009, AUDIT-010, AUDIT-013, AUDIT-014, AUDIT-018)
+- DEFERRED TO PHASE 4: 6 items (AUDIT-003, AUDIT-006, AUDIT-008, AUDIT-011, AUDIT-012, AUDIT-015)
+- DEFERRED TO FUTURE: 2 items (AUDIT-016, AUDIT-017)
+
+**Outstanding HIGH/MEDIUM items for Phase 4:**
+- AUDIT-003 (LAB_RESULT_CM aliasing)
+- AUDIT-006 (Pandas to Polars migration)
+- AUDIT-008 (Validation module consolidation)
+
+All Phase 3 test coverage complete. No blockers for Phase 4.
+
+---
+
 **Total Audit Items:** 18 (5 HIGH, 5 MEDIUM, 8 LOW)
 
 **Next Steps:**
