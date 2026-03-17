@@ -1,9 +1,37 @@
-# HL data loading & cleaning — value & temporal validation module
-"""Value set conformance, vital/lab plausibility, ICD concordance,
-temporal consistency, tumor registry validation, and write-back helpers.
+# HL data loading & cleaning — value & temporal validation module (clean-layer)
+"""Value set conformance and plausibility checks for Phase 5 clean-layer validation.
 
-Adds binary flag columns (0/1, Int8) to DataFrames. Flag columns use
-the ``_val_`` infix naming convention for downstream identification.
+This module provides value validation during the clean phase (Phase 5), used by
+scripts/clean_all.py, as opposed to src/validate/values.py which is used during
+Phase 3-4 validation.
+
+**Pipeline Position:** Phase 5 (Clean/Assembly) - clean-layer value validation
+
+**Input:** Cleaned Parquet files after deduplication
+
+**Output:** Flag columns added to DataFrames (binary 0/1, Int8 dtype)
+
+**Orchestrated by:** scripts/clean_all.py
+
+**Key functions:** (near-copies of src/validate/values.py)
+- build_valueset_lookup(): Parse valuesets.csv
+- validate_coded_fields(): Value-set conformance checks
+- validate_vital_plausibility(): Vital sign range checks
+- validate_lab_plausibility(): Lab result range checks
+- detect_mapped_partners(): ICD-9→ICD-10 mapper detection
+- validate_icd_concordance(): ICD version-date concordance
+- validate_temporal_encounter(): Admit/discharge ordering
+- validate_future_dates(): Future date detection
+- validate_enrollment_dates(): Enrollment date ordering
+- validate_tumor_registry(): HL-specific tumor registry checks
+- write_validated(): Write flagged DataFrames back to Parquet
+
+**Flag column naming:** All flag columns use ``_val_`` infix (e.g., DX_val_icd_concordance,
+HT_val_range) for downstream identification.
+
+**TODO(audit): Near-duplication with src/validate/values.py**
+This module is a near-copy of src/validate/values.py with identical functions.
+Consider consolidating shared validation logic into a common library.
 """
 
 from datetime import date
@@ -15,6 +43,8 @@ import polars as pl
 # Constants — vital sign plausibility ranges
 # ---------------------------------------------------------------------------
 
+# Vital sign plausibility ranges (identical to src/validate/values.py)
+# Wide biological bounds to catch data entry errors while permitting extreme values
 VITAL_RANGES: dict[str, tuple[float, float]] = {
     "HT": (50.0, 272.0),
     "WT": (1.0, 500.0),
@@ -27,6 +57,8 @@ VITAL_RANGES: dict[str, tuple[float, float]] = {
 # Constants — HL-relevant lab plausibility ranges (wide biological)
 # ---------------------------------------------------------------------------
 
+# HL-relevant lab test plausibility ranges (identical to src/validate/values.py)
+# LOINC code → {name, min, max, unit} mapping for wide biological ranges
 HL_LAB_RANGES: dict[str, dict] = {
     "6690-2": {"name": "WBC", "min": 0, "max": 500, "unit": "10*3/uL"},
     "26464-8": {"name": "WBC alt", "min": 0, "max": 500, "unit": "10*3/uL"},
@@ -54,6 +86,7 @@ HL_LAB_RANGES: dict[str, dict] = {
 # Constants — temporal / ICD / PCORnet
 # ---------------------------------------------------------------------------
 
+# Temporal and ICD constants (identical to src/validate/values.py)
 FUTURE_DATE_CUTOFF = date(2025, 12, 31)
 
 MASKED_BIRTH_DATE = date(1900, 1, 1)
@@ -68,8 +101,11 @@ ALWAYS_VALID_CODES: set[str] = {"NI", "UN", "OT"}
 # Constants — tumor registry / HL-specific
 # ---------------------------------------------------------------------------
 
+# Tumor registry HL-specific constants (identical to src/validate/values.py)
+# WHO ICD-O-3 histology codes for Hodgkin lymphoma
 HL_HISTOLOGY_CODES: set[int] = set(range(9650, 9668))
 
+# Valid AJCC stage group values for HL
 VALID_AJCC_STAGES: set[str] = {
     "I",
     "IA",
@@ -88,6 +124,7 @@ VALID_AJCC_STAGES: set[str] = {
     "99",
 }
 
+# Valid B-symptom codes (A=absent, B=present, 8/9=unknown)
 _B_SYMPTOM_VALID: set[str] = {"A", "B", "1", "2", "9", "8", ""}
 
 
@@ -97,7 +134,17 @@ _B_SYMPTOM_VALID: set[str] = {"A", "B", "1", "2", "9", "8", ""}
 
 
 def _ensure_float(df: pl.DataFrame, col: str) -> pl.DataFrame:
-    """Cast *col* to Float64 if it is stored as String (Pitfall 1)."""
+    """Cast column to Float64 if stored as String to enable numeric comparisons.
+
+    Clean-layer version: Identical to src/validate/values._ensure_float().
+
+    Args:
+        df: DataFrame to modify
+        col: Column name to ensure is Float64
+
+    Returns:
+        DataFrame with column cast to Float64 (if originally String/Utf8)
+    """
     if col in df.columns and df.schema[col] in (pl.String, pl.Utf8):
         df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False))
     return df

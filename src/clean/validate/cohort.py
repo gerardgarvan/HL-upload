@@ -1,9 +1,30 @@
-# HL data loading & cleaning — cohort verification module
-"""HL cohort verification with exact ICD code matching, dual-date methods,
-ICD version flagging, DX_TYPE mismatch detection, and enrollment cross-check.
+# HL data loading & cleaning — cohort verification module (clean-layer)
+"""HL cohort verification for Phase 5 with exact ICD code matching and dual-date methods.
 
-Uses exact set of 149 ICD codes (77 ICD-10 C81.xx + 72 ICD-9 201.xx) with
-both dotted and normalized (dot-stripped) forms for format-adaptive matching.
+This module provides cohort verification during the clean phase (Phase 5), used by
+scripts/clean_all.py. Nearly identical to src/validate/cohort.py except detect_dx_format()
+has no code_col parameter (always uses "DX" column).
+
+**Pipeline Position:** Phase 5 (Clean/Assembly) - clean-layer cohort verification
+
+**Input:** Cleaned DIAGNOSIS and ENCOUNTER Parquet files
+
+**Output:** Cohort verification results for clean-layer quality checks
+
+**Orchestrated by:** scripts/clean_all.py
+
+**Key functions:** (adapted from src/validate/cohort.py)
+- detect_dx_format(): Auto-detect dotted vs undotted format (no code_col parameter)
+- check_dx_type_mismatches(): DX_TYPE mismatch detection
+- verify_hl_cohort(): Five-stage cohort verification algorithm
+- enrollment_crosscheck(): Cross-check cohort vs ENROLLMENT
+- build_cohort_summary_df(): Assemble per-patient summary DataFrame
+
+**TODO(audit): Near-duplication with src/validate/cohort.py**
+This module is a near-copy of src/validate/cohort.py with minor differences:
+- detect_dx_format() lacks code_col parameter (always "DX")
+- Otherwise identical logic and constants
+Consider consolidating or parameterizing the phase context.
 """
 
 from pathlib import Path
@@ -16,6 +37,10 @@ import polars as pl
 
 PATID_COL = "ID"
 
+# HL-specific ICD codes (identical to src/validate/cohort.py constants)
+# 77 ICD-10 codes: C81.xx (Hodgkin lymphoma)
+# 72 ICD-9 codes: 201.xx (Hodgkin's disease)
+# Clinical rationale: Exact 149-code set for HL cohort identification
 ICD10_HL_CODES: set[str] = {
     f"C81.{sub}{site}" for sub in ("0", "1", "2", "3", "4", "7", "9") for site in ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A")
 }  # 77 codes: C81.00 through C81.9A (no C81.5x or C81.6x)
@@ -24,11 +49,18 @@ ICD9_HL_CODES: set[str] = {
     f"201.{sub}{site}" for sub in ("0", "1", "2", "4", "5", "6", "7", "9") for site in ("0", "1", "2", "3", "4", "5", "6", "7", "8")
 }  # 72 codes: 201.00 through 201.98 (no 201.3x)
 
-ALL_HL_CODES: set[str] = ICD10_HL_CODES | ICD9_HL_CODES  # 149 codes
+ALL_HL_CODES: set[str] = ICD10_HL_CODES | ICD9_HL_CODES  # 149 codes total
 
 
 def normalize_dx(code: str) -> str:
-    """Normalize diagnosis code: uppercase + remove dots."""
+    """Normalize diagnosis code to uppercase with dots removed for format-adaptive matching.
+
+    Args:
+        code: Diagnosis code in any format
+
+    Returns:
+        str: Normalized code (uppercase, no dots)
+    """
     return code.upper().replace(".", "")
 
 
@@ -49,8 +81,20 @@ _VALID_ICD9_DX_TYPES = {"09", None, "", "NI"}
 def detect_dx_format(diagnosis_path: Path) -> str:
     """Detect whether DX values use dotted (C81.10) or undotted (C8110) format.
 
-    Samples up to 1000 non-null DX values and checks dot frequency.
-    Returns 'dotted' or 'undotted'.
+    Clean-layer version: Always uses "DX" column (no code_col parameter).
+    Differs from src/validate/cohort.detect_dx_format() which accepts code_col parameter.
+
+    Clinical rationale: Format detection enables format-adaptive matching for accurate
+    cohort identification across partners with inconsistent DX formatting.
+
+    Args:
+        diagnosis_path: Path to DIAGNOSIS Parquet file
+
+    Returns:
+        str: "dotted" if >50% of sampled DX values contain dots, else "undotted"
+
+    Side effects:
+        None (read-only sampling using lazy evaluation)
     """
     sample = pl.scan_parquet(diagnosis_path).filter(pl.col("DX").is_not_null()).select("DX").head(1000).collect()
     if sample.is_empty():
@@ -66,11 +110,18 @@ def detect_dx_format(diagnosis_path: Path) -> str:
 
 
 def check_dx_type_mismatches(hl_dx: pl.DataFrame) -> pl.DataFrame:
-    """Find HL DX records where code prefix disagrees with DX_TYPE.
+    """Find HL diagnosis records where code prefix disagrees with DX_TYPE field.
 
-    C81.xx with DX_TYPE not in ('10', None, '', 'NI') → mismatch.
-    201.xx with DX_TYPE not in ('09', None, '', 'NI') → mismatch.
-    Reports mismatches but does NOT exclude records (per locked decision).
+    Clean-layer version: Identical to src/validate/cohort.check_dx_type_mismatches().
+
+    Clinical rationale: DX_TYPE mismatches indicate data quality issues but don't
+    invalidate diagnoses. Records are reported but NOT excluded from cohort.
+
+    Args:
+        hl_dx: DataFrame of HL diagnosis records (must include DX and DX_TYPE columns)
+
+    Returns:
+        pl.DataFrame: Mismatch records with [ID, DX, DX_TYPE, expected_type, SOURCE]
     """
     if "DX_TYPE" not in hl_dx.columns:
         return pl.DataFrame(

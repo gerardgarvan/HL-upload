@@ -1,9 +1,30 @@
-# HL data loading & cleaning — structural validation module
-"""Schema comparison, key integrity, completeness profiling functions.
+# HL data loading & cleaning — structural validation module (clean-layer)
+"""Schema comparison, key integrity, completeness profiling functions for Phase 5.
 
-Validates Parquet files against DatasetCoverPage expected columns,
-checks PATID/ENCOUNTERID referential integrity, and computes per-partner
-completeness with PCORnet missing value classification.
+This module provides structural validation during the clean phase (Phase 5), used by
+scripts/clean_all.py, as opposed to src/validate/structural.py which is used during
+Phase 3-4 validation by scripts/validate_all.py.
+
+**Pipeline Position:** Phase 5 (Clean/Assembly) - clean-layer validation
+
+**Input:** Cleaned Parquet files after deduplication and flagging
+
+**Output:** Structural validation results for clean-layer quality checks
+
+**Orchestrated by:** scripts/clean_all.py
+
+**Key functions:** (near-copies of src/validate/structural.py)
+- parse_cover_page(): DatasetCoverPage parser
+- validate_table_schema(): Schema comparison vs expected columns
+- check_patid_uniqueness(): DEMOGRAPHIC ID uniqueness check
+- check_patid_integrity(): PATID referential integrity (anti-join)
+- check_encounterid_integrity(): ENCOUNTERID referential integrity
+- completeness_by_partner(): Per-partner completeness profiling
+- classify_missing_values(): PCORnet missing-value code classification
+
+**TODO(audit): Near-duplication with src/validate/structural.py**
+This module is a near-copy of src/validate/structural.py with identical function
+signatures and logic. Consider consolidating into shared validation library.
 """
 
 import re
@@ -15,8 +36,10 @@ import polars as pl
 # Constants
 # ---------------------------------------------------------------------------
 
+# Constants (identical to src/validate/structural.py)
 PATID_COL = "ID"
 
+# HIPAA small-cell suppression threshold
 SMALL_CELL_THRESHOLD = 10
 
 ENCOUNTER_LINKED_TABLES: list[str] = [
