@@ -577,6 +577,18 @@ Make "Dual eligible" a **level** of each payer variable (Medicare, Medicaid, Dua
 
 ---
 
+### Phase 18: Most Common Insurance at Radiation and SCT; Expand Treatment Window
+
+Add most common payer at **radiation** and at **stem cell transplant (SCT)** encounters; expand first/last insurance around treatments by **30 days** (90 → 120).
+
+- **Plan:** [.planning/phases/18-radiation-sct-payer-window/18-01-PLAN.md](phases/18-radiation-sct-payer-window/18-01-PLAN.md)
+- **Research:** [.planning/phases/18-radiation-sct-payer-window/18-RESEARCH.md](phases/18-radiation-sct-payer-window/18-RESEARCH.md)
+- **Scope:** `encounter_payer_summary.py` — PAYER_AT_TREATMENT_WINDOW_DAYS=120; _get_radiation_dates, _get_sct_dates; PAYER_CATEGORY_MOST_FREQUENT_AT_RADIATION, PAYER_CATEGORY_MOST_FREQUENT_AT_SCT; docs and build_insurance_summary.
+- **Dependencies:** Phase 17
+- **Effort:** ~1 day
+
+---
+
 ### Phase 11: Remove XLSX Dependencies (Use CSV)
 
 **Goal:** Replace Outcomes.xlsx with Outcomes.csv; remove openpyxl dependency.

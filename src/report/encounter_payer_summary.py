@@ -29,6 +29,13 @@ INCLUDE_99_AS_SENTINEL: bool = False
 
 DUAL_ELIGIBLE_CODES: tuple[str, ...] = ("14", "141", "142")  # PCORnet; 41 = Corrections Federal, not dual-eligible
 
+# Window (days) for "payer around treatment" dates; only valid (non-missing) payer is counted; mode of valid payers in window.
+PAYER_AT_TREATMENT_WINDOW_DAYS: int = 30
+
+# CPT sets for radiation and stem cell transplant (procedure dates)
+RADIATION_CPTS: frozenset[str] = frozenset({"77401", "77402", "77407", "77412", "77427"})
+SCT_CPTS: frozenset[str] = frozenset({"38240", "38241", "38242", "38230", "38232"})
+
 # Payer code → category (PCORnet typology: 1=Medicare, 2=Medicaid, 5/6=Private, etc.)
 def _collapse_payer_category(code: str) -> str:
     """Map PAYER_TYPE_PRIMARY to collapsed category for analysis."""
@@ -159,6 +166,89 @@ def _get_chemo_dates(table_map: dict[str, Path], ids: pl.Series) -> pl.DataFrame
     )
 
 
+def _get_radiation_dates(table_map: dict[str, Path], ids: pl.Series) -> pl.DataFrame | None:
+    """First and last radiation date per patient. Sources: TR DT_RAD, PROCEDURES (radiation CPTs)."""
+    rad_frames: list[pl.DataFrame] = []
+    for tr_name in sorted(TUMOR_REGISTRY_TABLES):
+        tr_path = table_map.get(tr_name)
+        if not tr_path or not tr_path.exists():
+            continue
+        schema = pl.read_parquet_schema(tr_path)
+        if "DT_RAD" not in schema.names():
+            continue
+        tr = (
+            pl.scan_parquet(tr_path)
+            .with_columns(pl.col(PATID_COL).cast(pl.String))
+            .filter(pl.col(PATID_COL).is_in(ids.implode()))
+            .select(PATID_COL, "DT_RAD")
+            .collect()
+        )
+        if tr.is_empty():
+            continue
+        col = "DT_RAD"
+        if tr[col].dtype in (pl.String, pl.Utf8):
+            tr = tr.with_columns(
+                pl.col(col)
+                .str.to_date("%Y.%m.%d", strict=False)
+                .fill_null(pl.col(col).str.to_date("%m/%d/%Y", strict=False))
+                .fill_null(pl.col(col).str.to_date("%d%b%Y", strict=False))
+                .fill_null(pl.col(col).str.to_date("%Y%m%d", strict=False))
+                .alias("_d")
+            )
+        else:
+            tr = tr.with_columns(pl.col(col).alias("_d"))
+        tc = tr.filter(pl.col("_d").is_not_null()).select(PATID_COL, pl.col("_d").alias("_rad_d"))
+        if not tc.is_empty():
+            rad_frames.append(tc)
+    px_path = table_map.get("PROCEDURES")
+    if px_path and px_path.exists():
+        px_schema = pl.read_parquet_schema(px_path)
+        if "PX" in px_schema.names() and "PX_DATE" in px_schema.names():
+            px = (
+                pl.scan_parquet(px_path)
+                .with_columns(pl.col(PATID_COL).cast(pl.String))
+                .filter(pl.col(PATID_COL).is_in(ids.implode()))
+                .filter(pl.col("PX").cast(pl.Utf8).is_in(list(RADIATION_CPTS)))
+                .filter(pl.col("PX_DATE").is_not_null())
+                .select(PATID_COL, pl.col("PX_DATE").alias("_rad_d"))
+                .collect()
+            )
+            if not px.is_empty():
+                rad_frames.append(px)
+    if not rad_frames:
+        return None
+    all_rad = pl.concat(rad_frames)
+    return all_rad.group_by(PATID_COL).agg(
+        pl.col("_rad_d").min().alias("FIRST_RADIATION_DATE"),
+        pl.col("_rad_d").max().alias("LAST_RADIATION_DATE"),
+    )
+
+
+def _get_sct_dates(table_map: dict[str, Path], ids: pl.Series) -> pl.DataFrame | None:
+    """First and last stem cell transplant procedure date per patient. Source: PROCEDURES (SCT CPTs)."""
+    px_path = table_map.get("PROCEDURES")
+    if not px_path or not px_path.exists():
+        return None
+    px_schema = pl.read_parquet_schema(px_path)
+    if "PX" not in px_schema.names() or "PX_DATE" not in px_schema.names():
+        return None
+    px = (
+        pl.scan_parquet(px_path)
+        .with_columns(pl.col(PATID_COL).cast(pl.String))
+        .filter(pl.col(PATID_COL).is_in(ids.implode()))
+        .filter(pl.col("PX").cast(pl.Utf8).is_in(list(SCT_CPTS)))
+        .filter(pl.col("PX_DATE").is_not_null())
+        .select(PATID_COL, "PX_DATE")
+        .collect()
+    )
+    if px.is_empty():
+        return None
+    return px.group_by(PATID_COL).agg(
+        pl.col("PX_DATE").min().alias("FIRST_SCT_DATE"),
+        pl.col("PX_DATE").max().alias("LAST_SCT_DATE"),
+    )
+
+
 def _effective_payer_and_dual_exprs(
     has_secondary: bool,
 ) -> tuple[pl.Expr, pl.Expr, pl.Expr]:
@@ -264,6 +354,76 @@ def _payer_at_date(
     ).with_columns(pl.col("_dual_eligible").fill_null(0).cast(pl.Int8))
 
 
+def _payer_mode_in_window(
+    enc_path: Path,
+    patients: pl.DataFrame,
+    date_col: str,
+    window_days: int = 30,
+) -> pl.DataFrame:
+    """Mode (most frequent) valid payer category among encounters within ±window_days of patients[date_col].
+
+    Only encounters with valid (non-missing, non-sentinel) effective payer are counted; the most
+    common such category per patient is returned. Returns PATID_COL and _mode_category (string).
+    """
+    enc_schema = pl.read_parquet_schema(enc_path)
+    if "ADMIT_DATE" not in enc_schema.names() or "PAYER_TYPE_PRIMARY" not in enc_schema.names():
+        return patients.select(PATID_COL).with_columns(
+            pl.lit(None).cast(pl.String).alias("_mode_category")
+        )
+    has_secondary = "PAYER_TYPE_SECONDARY" in enc_schema.names()
+    enc_cols = [PATID_COL, "ADMIT_DATE", "PAYER_TYPE_PRIMARY"]
+    if has_secondary:
+        enc_cols.append("PAYER_TYPE_SECONDARY")
+    eff_expr, valid_expr, dual_expr = _effective_payer_and_dual_exprs(has_secondary)
+    enc = (
+        pl.scan_parquet(enc_path)
+        .with_columns(pl.col(PATID_COL).cast(pl.String))
+        .filter(pl.col(PATID_COL).is_in(patients[PATID_COL].implode()))
+        .select(enc_cols)
+        .with_columns([eff_expr, valid_expr, dual_expr])
+        .select(PATID_COL, "ADMIT_DATE", "effective_payer", "dual_eligible", "_valid")
+        .collect()
+    )
+    if enc.is_empty():
+        return patients.select(PATID_COL).with_columns(
+            pl.lit(None).cast(pl.String).alias("_mode_category")
+        )
+    joined = patients.select(PATID_COL, date_col).join(enc, on=PATID_COL, how="inner")
+    joined = joined.with_columns(
+        (pl.col("ADMIT_DATE") - pl.col(date_col)).dt.total_days().alias("_days_diff")
+    )
+    within = joined.filter(
+        (pl.col("_days_diff") >= -window_days) & (pl.col("_days_diff") <= window_days)
+        & pl.col("_valid")
+    )
+    if within.is_empty():
+        return patients.select(PATID_COL).with_columns(
+            pl.lit(None).cast(pl.String).alias("_mode_category")
+        )
+    within = within.with_columns(
+        pl.Series(
+            "PAYER_CATEGORY",
+            [
+                _payer_category_from_effective_and_dual(
+                    r["effective_payer"],
+                    r.get("dual_eligible", 0) or 0,
+                )
+                for r in within.iter_rows(named=True)
+            ],
+            dtype=pl.String,
+        )
+    )
+    mode_df = (
+        within.group_by(PATID_COL, "PAYER_CATEGORY")
+        .agg(pl.len().alias("_n"))
+        .sort("_n", descending=True)
+        .group_by(PATID_COL)
+        .first()
+        .select(PATID_COL, pl.col("PAYER_CATEGORY").alias("_mode_category"))
+    )
+    return patients.select(PATID_COL).join(mode_df, on=PATID_COL, how="left")
+
+
 def build_encounter_payer_summary(table_map: dict[str, Path]) -> pl.DataFrame:
     """Summarize ENCOUNTER at patient level with payer-focused variables.
 
@@ -289,8 +449,15 @@ def build_encounter_payer_summary(table_map: dict[str, Path]) -> pl.DataFrame:
         "PAYER_CATEGORY_AT_FIRST_CHEMO": pl.String,
         "PAYER_CATEGORY_AT_LAST_CHEMO": pl.String,
         "PAYER_CATEGORY_MOST_FREQUENT_AT_CHEMO": pl.String,
+        "PAYER_CATEGORY_AT_FIRST_RADIATION": pl.String,
+        "PAYER_CATEGORY_AT_LAST_RADIATION": pl.String,
+        "PAYER_CATEGORY_AT_FIRST_SCT": pl.String,
+        "PAYER_CATEGORY_AT_LAST_SCT": pl.String,
         "PAYER_TRANSITION": pl.Int8,
         "DUAL_ELIGIBLE": pl.Int8,
+        "HAD_CHEMO": pl.Int8,
+        "HAD_RADIATION": pl.Int8,
+        "HAD_SCT": pl.Int8,
     }
 
     enc_path = table_map.get("ENCOUNTER")
@@ -407,23 +574,16 @@ def build_encounter_payer_summary(table_map: dict[str, Path]) -> pl.DataFrame:
     first_dx = _get_first_hl_dx_dates(table_map, ids)
     chemo = _get_chemo_dates(table_map, ids)
 
+    # Payer at first DX / first chemo / last chemo: ±PAYER_AT_TREATMENT_WINDOW_DAYS; mode of valid (non-missing) payer in window
     if first_dx is not None:
-        payer_dx = _payer_at_date(enc_path, first_dx, "FIRST_HL_DX_DATE")
-        payer_dx = payer_dx.with_columns(
-            pl.Series(
-                "PAYER_CATEGORY_AT_FIRST_DX",
-                [
-                    _payer_category_from_effective_and_dual(
-                        r["_raw_payer"],
-                        r.get("_dual_eligible", 0) or 0,
-                    )
-                    for r in payer_dx.iter_rows(named=True)
-                ],
-                dtype=pl.String,
-            )
+        payer_dx = _payer_mode_in_window(
+            enc_path, first_dx, "FIRST_HL_DX_DATE", window_days=PAYER_AT_TREATMENT_WINDOW_DAYS
         )
         base = base.join(
-            payer_dx.select(PATID_COL, "PAYER_CATEGORY_AT_FIRST_DX"),
+            payer_dx.select(
+                PATID_COL,
+                pl.col("_mode_category").alias("PAYER_CATEGORY_AT_FIRST_DX"),
+            ),
             on=PATID_COL,
             how="left",
         )
@@ -431,42 +591,26 @@ def build_encounter_payer_summary(table_map: dict[str, Path]) -> pl.DataFrame:
         base = base.with_columns(pl.lit(None).cast(pl.String).alias("PAYER_CATEGORY_AT_FIRST_DX"))
 
     if chemo is not None:
-        payer_first = _payer_at_date(enc_path, chemo, "FIRST_CHEMO_DATE")
-        payer_first = payer_first.with_columns(
-            pl.Series(
-                "PAYER_CATEGORY_AT_FIRST_CHEMO",
-                [
-                    _payer_category_from_effective_and_dual(
-                        r["_raw_payer"],
-                        r.get("_dual_eligible", 0) or 0,
-                    )
-                    for r in payer_first.iter_rows(named=True)
-                ],
-                dtype=pl.String,
-            )
+        payer_first = _payer_mode_in_window(
+            enc_path, chemo, "FIRST_CHEMO_DATE", window_days=PAYER_AT_TREATMENT_WINDOW_DAYS
         )
         base = base.join(
-            payer_first.select(PATID_COL, "PAYER_CATEGORY_AT_FIRST_CHEMO"),
+            payer_first.select(
+                PATID_COL,
+                pl.col("_mode_category").alias("PAYER_CATEGORY_AT_FIRST_CHEMO"),
+            ),
             on=PATID_COL,
             how="left",
         )
 
-        payer_last = _payer_at_date(enc_path, chemo, "LAST_CHEMO_DATE")
-        payer_last = payer_last.with_columns(
-            pl.Series(
-                "PAYER_CATEGORY_AT_LAST_CHEMO",
-                [
-                    _payer_category_from_effective_and_dual(
-                        r["_raw_payer"],
-                        r.get("_dual_eligible", 0) or 0,
-                    )
-                    for r in payer_last.iter_rows(named=True)
-                ],
-                dtype=pl.String,
-            )
+        payer_last = _payer_mode_in_window(
+            enc_path, chemo, "LAST_CHEMO_DATE", window_days=PAYER_AT_TREATMENT_WINDOW_DAYS
         )
         base = base.join(
-            payer_last.select(PATID_COL, "PAYER_CATEGORY_AT_LAST_CHEMO"),
+            payer_last.select(
+                PATID_COL,
+                pl.col("_mode_category").alias("PAYER_CATEGORY_AT_LAST_CHEMO"),
+            ),
             on=PATID_COL,
             how="left",
         )
@@ -528,6 +672,99 @@ def build_encounter_payer_summary(table_map: dict[str, Path]) -> pl.DataFrame:
             pl.lit(None).cast(pl.String).alias("PAYER_CATEGORY_MOST_FREQUENT_AT_CHEMO"),
         )
 
+    # Payer at first/last radiation: ±PAYER_AT_TREATMENT_WINDOW_DAYS; mode of valid payer in window
+    radiation = _get_radiation_dates(table_map, ids)
+    if radiation is not None:
+        payer_first_rad = _payer_mode_in_window(
+            enc_path, radiation, "FIRST_RADIATION_DATE", window_days=PAYER_AT_TREATMENT_WINDOW_DAYS
+        )
+        base = base.join(
+            payer_first_rad.select(
+                PATID_COL,
+                pl.col("_mode_category").alias("PAYER_CATEGORY_AT_FIRST_RADIATION"),
+            ),
+            on=PATID_COL,
+            how="left",
+        )
+        payer_last_rad = _payer_mode_in_window(
+            enc_path, radiation, "LAST_RADIATION_DATE", window_days=PAYER_AT_TREATMENT_WINDOW_DAYS
+        )
+        base = base.join(
+            payer_last_rad.select(
+                PATID_COL,
+                pl.col("_mode_category").alias("PAYER_CATEGORY_AT_LAST_RADIATION"),
+            ),
+            on=PATID_COL,
+            how="left",
+        )
+    else:
+        base = base.with_columns(
+            pl.lit(None).cast(pl.String).alias("PAYER_CATEGORY_AT_FIRST_RADIATION"),
+            pl.lit(None).cast(pl.String).alias("PAYER_CATEGORY_AT_LAST_RADIATION"),
+        )
+
+    # Payer at first/last SCT: ±PAYER_AT_TREATMENT_WINDOW_DAYS; mode of valid payer in window
+    sct = _get_sct_dates(table_map, ids)
+    if sct is not None:
+        payer_first_sct = _payer_mode_in_window(
+            enc_path, sct, "FIRST_SCT_DATE", window_days=PAYER_AT_TREATMENT_WINDOW_DAYS
+        )
+        base = base.join(
+            payer_first_sct.select(
+                PATID_COL,
+                pl.col("_mode_category").alias("PAYER_CATEGORY_AT_FIRST_SCT"),
+            ),
+            on=PATID_COL,
+            how="left",
+        )
+        payer_last_sct = _payer_mode_in_window(
+            enc_path, sct, "LAST_SCT_DATE", window_days=PAYER_AT_TREATMENT_WINDOW_DAYS
+        )
+        base = base.join(
+            payer_last_sct.select(
+                PATID_COL,
+                pl.col("_mode_category").alias("PAYER_CATEGORY_AT_LAST_SCT"),
+            ),
+            on=PATID_COL,
+            how="left",
+        )
+    else:
+        base = base.with_columns(
+            pl.lit(None).cast(pl.String).alias("PAYER_CATEGORY_AT_FIRST_SCT"),
+            pl.lit(None).cast(pl.String).alias("PAYER_CATEGORY_AT_LAST_SCT"),
+        )
+
+    # Treatment flags: 1 if patient has at least one date for that treatment, else 0
+    if chemo is not None:
+        base = base.join(
+            chemo.select(PATID_COL).unique().with_columns(pl.lit(1).cast(pl.Int8).alias("HAD_CHEMO")),
+            on=PATID_COL,
+            how="left",
+        )
+    else:
+        base = base.with_columns(pl.lit(0).cast(pl.Int8).alias("HAD_CHEMO"))
+    base = base.with_columns(pl.col("HAD_CHEMO").fill_null(0).cast(pl.Int8))
+
+    if radiation is not None:
+        base = base.join(
+            radiation.select(PATID_COL).unique().with_columns(pl.lit(1).cast(pl.Int8).alias("HAD_RADIATION")),
+            on=PATID_COL,
+            how="left",
+        )
+    else:
+        base = base.with_columns(pl.lit(0).cast(pl.Int8).alias("HAD_RADIATION"))
+    base = base.with_columns(pl.col("HAD_RADIATION").fill_null(0).cast(pl.Int8))
+
+    if sct is not None:
+        base = base.join(
+            sct.select(PATID_COL).unique().with_columns(pl.lit(1).cast(pl.Int8).alias("HAD_SCT")),
+            on=PATID_COL,
+            how="left",
+        )
+    else:
+        base = base.with_columns(pl.lit(0).cast(pl.Int8).alias("HAD_SCT"))
+    base = base.with_columns(pl.col("HAD_SCT").fill_null(0).cast(pl.Int8))
+
     base = base.with_columns(pl.col("DUAL_ELIGIBLE").fill_null(0).cast(pl.Int8))
     return base.select(
         PATID_COL,
@@ -539,6 +776,13 @@ def build_encounter_payer_summary(table_map: dict[str, Path]) -> pl.DataFrame:
         "PAYER_CATEGORY_AT_FIRST_CHEMO",
         "PAYER_CATEGORY_AT_LAST_CHEMO",
         "PAYER_CATEGORY_MOST_FREQUENT_AT_CHEMO",
+        "PAYER_CATEGORY_AT_FIRST_RADIATION",
+        "PAYER_CATEGORY_AT_LAST_RADIATION",
+        "PAYER_CATEGORY_AT_FIRST_SCT",
+        "PAYER_CATEGORY_AT_LAST_SCT",
         "PAYER_TRANSITION",
         "DUAL_ELIGIBLE",
+        "HAD_CHEMO",
+        "HAD_RADIATION",
+        "HAD_SCT",
     )

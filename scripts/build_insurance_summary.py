@@ -80,6 +80,10 @@ def main(config_path: Path | None = None) -> None:
     if "DUAL_ELIGIBLE" not in df.columns:
         df = df.with_columns(pl.lit(0).cast(pl.Int8).alias("DUAL_ELIGIBLE"))
         print("  Note: DUAL_ELIGIBLE was missing in parquet; added as 0. Re-run assemble_clean.py for real values.")
+    # Treatment flags for cohort-specific summaries (add 0 if missing)
+    for col in ("HAD_CHEMO", "HAD_RADIATION", "HAD_SCT"):
+        if col not in df.columns:
+            df = df.with_columns(pl.lit(0).cast(pl.Int8).alias(col))
 
     n_total = df.height
 
@@ -92,6 +96,10 @@ def main(config_path: Path | None = None) -> None:
         "PAYER_CATEGORY_AT_FIRST_CHEMO",
         "PAYER_CATEGORY_AT_LAST_CHEMO",
         "PAYER_CATEGORY_MOST_FREQUENT_AT_CHEMO",
+        "PAYER_CATEGORY_AT_FIRST_RADIATION",
+        "PAYER_CATEGORY_AT_LAST_RADIATION",
+        "PAYER_CATEGORY_AT_FIRST_SCT",
+        "PAYER_CATEGORY_AT_LAST_SCT",
     ]
     summary_rows: list[dict] = []
     for var in INSURANCE_VARS:
@@ -135,6 +143,96 @@ def main(config_path: Path | None = None) -> None:
     if summary_rows:
         pl.DataFrame(summary_rows).write_csv(reports_dir / "encounter_payer_summary.csv")
         print(f"  encounter_payer_summary.csv")
+
+    # -------------------------------------------------------------------------
+    # Treatment-specific summary tables (enrollment + had that treatment)
+    # -------------------------------------------------------------------------
+    def _build_cohort_summary_rows(
+        cohort_df: pl.DataFrame,
+        vars_list: list[str],
+    ) -> list[dict]:
+        """Build Variable/Category/N/Pct rows for a cohort, same format as main summary."""
+        rows: list[dict] = []
+        n_cohort = cohort_df.height
+        if n_cohort == 0:
+            return rows
+        for var in vars_list:
+            if var not in cohort_df.columns:
+                continue
+            normalized = cohort_df.with_columns(_normalize_payer(cohort_df[var]).alias("_cat"))
+            grp = normalized.group_by("_cat").agg(pl.len().alias("N"))
+            grp = grp.with_columns((100.0 * pl.col("N") / n_cohort).alias("Pct"))
+            grp = _order_categories(grp.rename({"_cat": "Category"}), "Category")
+            for row in grp.iter_rows(named=True):
+                n = row["N"]
+                pct = row["Pct"]
+                rows.append({
+                    "Variable": var,
+                    "Category": row["Category"],
+                    "N": _suppress(n),
+                    "Pct": _suppress(int(round(pct))) if 1 <= n <= SMALL_CELL_THRESHOLD else f"{pct:.1f}",
+                })
+        if "PAYER_TRANSITION" in cohort_df.columns:
+            for val in (0, 1):
+                n = cohort_df.filter(pl.col("PAYER_TRANSITION") == val).height
+                pct = 100.0 * n / n_cohort if n_cohort else 0
+                rows.append({
+                    "Variable": "PAYER_TRANSITION",
+                    "Category": str(val),
+                    "N": _suppress(n),
+                    "Pct": _suppress(int(round(pct))) if 1 <= n <= SMALL_CELL_THRESHOLD else f"{pct:.1f}",
+                })
+        if "DUAL_ELIGIBLE" in cohort_df.columns:
+            for val in (0, 1):
+                n = cohort_df.filter(pl.col("DUAL_ELIGIBLE") == val).height
+                pct = 100.0 * n / n_cohort if n_cohort else 0
+                rows.append({
+                    "Variable": "DUAL_ELIGIBLE",
+                    "Category": str(val),
+                    "N": _suppress(n),
+                    "Pct": _suppress(int(round(pct))) if 1 <= n <= SMALL_CELL_THRESHOLD else f"{pct:.1f}",
+                })
+        return rows
+
+    # Chemo cohort: enrollment + had any chemo; general insurance + chemo-specific vars
+    CHEMO_COHORT_VARS = [
+        "PAYER_CATEGORY_PRIMARY",
+        "PAYER_CATEGORY_AT_FIRST_DX",
+        "PAYER_CATEGORY_AT_FIRST_CHEMO",
+        "PAYER_CATEGORY_AT_LAST_CHEMO",
+        "PAYER_CATEGORY_MOST_FREQUENT_AT_CHEMO",
+    ]
+    df_chemo = df.filter(pl.col("HAD_CHEMO") == 1)
+    chemo_summary_rows = _build_cohort_summary_rows(df_chemo, CHEMO_COHORT_VARS)
+    if chemo_summary_rows:
+        pl.DataFrame(chemo_summary_rows).write_csv(reports_dir / "insurance_summary_chemo.csv")
+        print(f"  insurance_summary_chemo.csv (N={df_chemo.height:,})")
+
+    # Radiation cohort: enrollment + had any radiation; general insurance + radiation vars
+    RADIATION_COHORT_VARS = [
+        "PAYER_CATEGORY_PRIMARY",
+        "PAYER_CATEGORY_AT_FIRST_DX",
+        "PAYER_CATEGORY_AT_FIRST_RADIATION",
+        "PAYER_CATEGORY_AT_LAST_RADIATION",
+    ]
+    df_radiation = df.filter(pl.col("HAD_RADIATION") == 1)
+    radiation_summary_rows = _build_cohort_summary_rows(df_radiation, RADIATION_COHORT_VARS)
+    if radiation_summary_rows:
+        pl.DataFrame(radiation_summary_rows).write_csv(reports_dir / "insurance_summary_radiation.csv")
+        print(f"  insurance_summary_radiation.csv (N={df_radiation.height:,})")
+
+    # SCT cohort: enrollment + had any stem cell transplant; general insurance + SCT vars
+    SCT_COHORT_VARS = [
+        "PAYER_CATEGORY_PRIMARY",
+        "PAYER_CATEGORY_AT_FIRST_DX",
+        "PAYER_CATEGORY_AT_FIRST_SCT",
+        "PAYER_CATEGORY_AT_LAST_SCT",
+    ]
+    df_sct = df.filter(pl.col("HAD_SCT") == 1)
+    sct_summary_rows = _build_cohort_summary_rows(df_sct, SCT_COHORT_VARS)
+    if sct_summary_rows:
+        pl.DataFrame(sct_summary_rows).write_csv(reports_dir / "insurance_summary_sct.csv")
+        print(f"  insurance_summary_sct.csv (N={df_sct.height:,})")
 
     # Normalize payer columns for tables
     for col in ["PAYER_CATEGORY_AT_FIRST_DX", "PAYER_CATEGORY_AT_FIRST_CHEMO"]:
@@ -317,6 +415,25 @@ def main(config_path: Path | None = None) -> None:
         md_lines.append("")
         md_lines.append("(Column not present.)")
         md_lines.append("")
+
+    # -------------------------------------------------------------------------
+    # Treatment-specific cohorts (enrollment + had that treatment)
+    # -------------------------------------------------------------------------
+    md_lines.append("## Summary by treatment type")
+    md_lines.append("")
+    md_lines.append("Cohorts: enrolled patients who had at least one occurrence of the treatment. Full counts by variable are in the CSV files below.")
+    md_lines.append("")
+    n_chemo = df.filter(pl.col("HAD_CHEMO") == 1).height if "HAD_CHEMO" in df.columns else 0
+    n_rad = df.filter(pl.col("HAD_RADIATION") == 1).height if "HAD_RADIATION" in df.columns else 0
+    n_sct = df.filter(pl.col("HAD_SCT") == 1).height if "HAD_SCT" in df.columns else 0
+    md_lines.append("| Cohort | N | Summary file |")
+    md_lines.append("|--------|---|--------------|")
+    md_lines.append(f"| Chemo (any chemo) | {flag_small_cell(n_chemo)} | insurance_summary_chemo.csv |")
+    md_lines.append(f"| Radiation (any radiation) | {flag_small_cell(n_rad)} | insurance_summary_radiation.csv |")
+    md_lines.append(f"| Stem cell transplant (any SCT) | {flag_small_cell(n_sct)} | insurance_summary_sct.csv |")
+    md_lines.append("")
+    md_lines.append("Each CSV has: Variable, Category, N, Pct (general insurance + treatment-specific payer variables; PAYER_TRANSITION and DUAL_ELIGIBLE included).")
+    md_lines.append("")
 
     # Write markdown report
     (reports_dir / "insurance_summary.md").write_text("\n".join(md_lines), encoding="utf-8")
