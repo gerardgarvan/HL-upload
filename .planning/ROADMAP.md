@@ -12,7 +12,7 @@ This roadmap transforms an existing, functional clinical data pipeline into a tr
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Documentation & Baseline** - Understand and document the pipeline; capture golden outputs for regression protection
+- [x] **Phase 1: Documentation & Baseline** - Understand and document the pipeline; capture golden outputs for regression protection (completed 2026-03-17)
 - [ ] **Phase 2: Validation & Suppression Hardening** - Add checkpoints at phase boundaries; centralize HIPAA-compliant small-cell suppression
 - [ ] **Phase 3: Test Coverage for Fragile Areas** - Lock in correctness with comprehensive tests for payer logic, date parsing, and reports
 - [ ] **Phase 4: Reproducibility & Onboarding** - Enable collaborators to clone, configure, and run the pipeline
@@ -28,7 +28,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. All modules in `src/` have module-level docstrings explaining what the module does and how it fits in the pipeline
   3. `docs/PIPELINE.md` exists and describes the full data flow from raw CSV to final outputs, readable by a collaborator unfamiliar with the codebase
   4. Golden output files are captured for all pipeline phases (converted Parquet, cleaned tables, patient_level.parquet, quality reports, insurance summaries) enabling regression comparison
-**Plans:** 5 plans
+**Plans:** 5/5 plans complete
 
 Plans:
 - [ ] 01-01-PLAN.md — Docstrings for src/load/, src/validate/, src/clean/validate/ (DOC-01, DOC-02)
@@ -84,7 +84,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Documentation & Baseline | 0/5 | Planned | - |
+| 1. Documentation & Baseline | 0/5 | Complete    | 2026-03-17 |
 | 2. Validation & Suppression Hardening | 0/TBD | Not started | - |
 | 3. Test Coverage for Fragile Areas | 0/TBD | Not started | - |
 | 4. Reproducibility & Onboarding | 0/TBD | Not started | - |
