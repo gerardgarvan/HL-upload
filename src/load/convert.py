@@ -230,7 +230,13 @@ def convert_date_column(df: pl.DataFrame, col: str, fmt: str) -> tuple[pl.DataFr
         if conversion succeeds. No backup copy is kept (destructive operation).
     """
     series = df[col]
-    non_null_non_empty = series.drop_nulls().filter(series.drop_nulls() != "")
+    non_null = series.drop_nulls()
+
+    # Check if empty before filtering (avoids Null dtype comparison issue)
+    if non_null.len() == 0:
+        return df, {"col": col, "action": "skipped", "reason": "all null/empty"}
+
+    non_null_non_empty = non_null.filter(non_null != "")
     denominator = non_null_non_empty.len()
 
     if denominator == 0:
