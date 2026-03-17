@@ -13,7 +13,7 @@ This roadmap transforms an existing, functional clinical data pipeline into a tr
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Documentation & Baseline** - Understand and document the pipeline; capture golden outputs for regression protection (completed 2026-03-17)
-- [ ] **Phase 2: Validation & Suppression Hardening** - Add checkpoints at phase boundaries; centralize HIPAA-compliant small-cell suppression
+- [x] **Phase 2: Validation & Suppression Hardening** - Add checkpoints at phase boundaries; centralize HIPAA-compliant small-cell suppression (completed 2026-03-17)
 - [ ] **Phase 3: Test Coverage for Fragile Areas** - Lock in correctness with comprehensive tests for payer logic, date parsing, and reports
 - [ ] **Phase 4: Reproducibility & Onboarding** - Enable collaborators to clone, configure, and run the pipeline
 
@@ -46,7 +46,7 @@ Plans:
   2. Schema validation checks expected columns and dtypes after each phase writes output, catching schema drift or type degradation
   3. Configuration validation runs on pipeline startup and fails fast with actionable errors for missing files, bad paths, or invalid settings
   4. Small-cell suppression uses a single `_suppress()` function with a single threshold constant, and all report outputs have been audited for HIPAA compliance
-**Plans:** 3 plans
+**Plans:** 3/3 plans complete
 
 Plans:
 - [ ] 02-01-PLAN.md — Checkpoint module (row-count + schema validation) and config validation with startup summary (VAL-01, VAL-02, VAL-03)
@@ -87,6 +87,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Documentation & Baseline | 0/5 | Complete    | 2026-03-17 |
-| 2. Validation & Suppression Hardening | 0/3 | Planned | - |
+| 2. Validation & Suppression Hardening | 0/3 | Complete    | 2026-03-17 |
 | 3. Test Coverage for Fragile Areas | 0/TBD | Not started | - |
 | 4. Reproducibility & Onboarding | 0/TBD | Not started | - |
