@@ -3,7 +3,7 @@
 Reads derived/encounter_payer_summary.parquet, produces:
 - reports/encounter_payer_summary.csv (counts and percentages per category for each insurance variable; _suppress)
 - reports/insurance_summary.md (four tables with flag_small_cell)
-- reports/payer_at_first_dx.csv, payer_at_first_chemo.csv, payer_crosstab_*.csv, payer_transition_prevalence.csv (_suppress)
+- reports/payer_at_first_dx.csv, payer_at_first_chemo.csv, payer_at_first_radiation.csv, payer_at_last_radiation.csv, payer_at_first_sct.csv, payer_at_last_sct.csv, payer_crosstab_*.csv, payer_transition_prevalence.csv (_suppress)
 - reports/figures/insurance_payer_at_first_dx.png, insurance_payer_at_first_chemo.png (bars; 1–10 excluded)
 
 Usage:
@@ -302,6 +302,126 @@ def main(config_path: Path | None = None) -> None:
         print(f"  payer_at_first_chemo.csv")
     else:
         md_lines.append("## Counts by payer at first chemotherapy")
+        md_lines.append("")
+        md_lines.append("(Column not present.)")
+        md_lines.append("")
+
+    # -------------------------------------------------------------------------
+    # Table: Counts by payer at first radiation
+    # -------------------------------------------------------------------------
+    col_rad_first = "PAYER_CATEGORY_AT_FIRST_RADIATION"
+    if col_rad_first in df.columns:
+        t_rad_first = (
+            df.with_columns(pl.col(col_rad_first).fill_null("Unknown").alias(col_rad_first))
+            .group_by(col_rad_first)
+            .agg(pl.len().alias("N"))
+        )
+        t_rad_first = _order_categories(t_rad_first, col_rad_first)
+        md_lines.append("## Counts by payer at first radiation")
+        md_lines.append("")
+        md_lines.append("| Payer category | N |")
+        md_lines.append("|----------------|---|")
+        for row in t_rad_first.iter_rows(named=True):
+            n = row["N"]
+            md_lines.append(f"| {row[col_rad_first]} | {flag_small_cell(n)} |")
+        md_lines.append("")
+        t_rad_first_csv = t_rad_first.with_columns(
+            pl.col("N").map_batches(lambda s: pl.Series([_suppress(int(v)) for v in s], dtype=pl.String))
+        )
+        t_rad_first_csv.write_csv(reports_dir / "payer_at_first_radiation.csv")
+        print(f"  payer_at_first_radiation.csv")
+    else:
+        md_lines.append("## Counts by payer at first radiation")
+        md_lines.append("")
+        md_lines.append("(Column not present.)")
+        md_lines.append("")
+
+    # -------------------------------------------------------------------------
+    # Table: Counts by payer at last radiation
+    # -------------------------------------------------------------------------
+    col_rad_last = "PAYER_CATEGORY_AT_LAST_RADIATION"
+    if col_rad_last in df.columns:
+        t_rad_last = (
+            df.with_columns(pl.col(col_rad_last).fill_null("Unknown").alias(col_rad_last))
+            .group_by(col_rad_last)
+            .agg(pl.len().alias("N"))
+        )
+        t_rad_last = _order_categories(t_rad_last, col_rad_last)
+        md_lines.append("## Counts by payer at last radiation")
+        md_lines.append("")
+        md_lines.append("| Payer category | N |")
+        md_lines.append("|----------------|---|")
+        for row in t_rad_last.iter_rows(named=True):
+            n = row["N"]
+            md_lines.append(f"| {row[col_rad_last]} | {flag_small_cell(n)} |")
+        md_lines.append("")
+        t_rad_last_csv = t_rad_last.with_columns(
+            pl.col("N").map_batches(lambda s: pl.Series([_suppress(int(v)) for v in s], dtype=pl.String))
+        )
+        t_rad_last_csv.write_csv(reports_dir / "payer_at_last_radiation.csv")
+        print(f"  payer_at_last_radiation.csv")
+    else:
+        md_lines.append("## Counts by payer at last radiation")
+        md_lines.append("")
+        md_lines.append("(Column not present.)")
+        md_lines.append("")
+
+    # -------------------------------------------------------------------------
+    # Table: Counts by payer at first SCT
+    # -------------------------------------------------------------------------
+    col_sct_first = "PAYER_CATEGORY_AT_FIRST_SCT"
+    if col_sct_first in df.columns:
+        t_sct_first = (
+            df.with_columns(pl.col(col_sct_first).fill_null("Unknown").alias(col_sct_first))
+            .group_by(col_sct_first)
+            .agg(pl.len().alias("N"))
+        )
+        t_sct_first = _order_categories(t_sct_first, col_sct_first)
+        md_lines.append("## Counts by payer at first stem cell transplant")
+        md_lines.append("")
+        md_lines.append("| Payer category | N |")
+        md_lines.append("|----------------|---|")
+        for row in t_sct_first.iter_rows(named=True):
+            n = row["N"]
+            md_lines.append(f"| {row[col_sct_first]} | {flag_small_cell(n)} |")
+        md_lines.append("")
+        t_sct_first_csv = t_sct_first.with_columns(
+            pl.col("N").map_batches(lambda s: pl.Series([_suppress(int(v)) for v in s], dtype=pl.String))
+        )
+        t_sct_first_csv.write_csv(reports_dir / "payer_at_first_sct.csv")
+        print(f"  payer_at_first_sct.csv")
+    else:
+        md_lines.append("## Counts by payer at first stem cell transplant")
+        md_lines.append("")
+        md_lines.append("(Column not present.)")
+        md_lines.append("")
+
+    # -------------------------------------------------------------------------
+    # Table: Counts by payer at last SCT
+    # -------------------------------------------------------------------------
+    col_sct_last = "PAYER_CATEGORY_AT_LAST_SCT"
+    if col_sct_last in df.columns:
+        t_sct_last = (
+            df.with_columns(pl.col(col_sct_last).fill_null("Unknown").alias(col_sct_last))
+            .group_by(col_sct_last)
+            .agg(pl.len().alias("N"))
+        )
+        t_sct_last = _order_categories(t_sct_last, col_sct_last)
+        md_lines.append("## Counts by payer at last stem cell transplant")
+        md_lines.append("")
+        md_lines.append("| Payer category | N |")
+        md_lines.append("|----------------|---|")
+        for row in t_sct_last.iter_rows(named=True):
+            n = row["N"]
+            md_lines.append(f"| {row[col_sct_last]} | {flag_small_cell(n)} |")
+        md_lines.append("")
+        t_sct_last_csv = t_sct_last.with_columns(
+            pl.col("N").map_batches(lambda s: pl.Series([_suppress(int(v)) for v in s], dtype=pl.String))
+        )
+        t_sct_last_csv.write_csv(reports_dir / "payer_at_last_sct.csv")
+        print(f"  payer_at_last_sct.csv")
+    else:
+        md_lines.append("## Counts by payer at last stem cell transplant")
         md_lines.append("")
         md_lines.append("(Column not present.)")
         md_lines.append("")
