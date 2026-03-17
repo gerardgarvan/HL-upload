@@ -62,10 +62,15 @@ Plans:
   2. Tests cover date parsing for all 3 formats (MM/DD/YYYY, YYYY-MM-DD, YYYYMMDD) including edge cases for nulls, mixed formats, invalid dates, and tumor registry format
   3. Tests cover report generation including output structure verification, suppression applied correctly, and aggregation correctness
   4. Tests cover phase checkpoint validation including row-count matching and schema validation passing for expected inputs
-**Plans**: TBD
+**Plans**: 6 plans in 2 waves
 
 Plans:
-- [ ] TBD during planning
+- [ ] 03-01-PLAN.md — Payer logic tests with exhaustive edge case coverage (TEST-01)
+- [ ] 03-02-PLAN.md — Date parsing tests for all 3 SAS formats with edge cases (TEST-02)
+- [ ] 03-03-PLAN.md — Report generation and dedup tests with suppression validation (TEST-03)
+- [ ] 03-04-PLAN.md — Checkpoint validation tests with row-count and schema checks (TEST-04)
+- [ ] 03-05-PLAN.md — TODO(audit) systematic resolution and conftest enhancement
+- [ ] 03-06-PLAN.md — Test reorganization to mirror src/ structure and pytest config
 
 ### Phase 4: Reproducibility & Onboarding
 **Goal**: A collaborator can clone the repo, follow setup documentation, and reproduce pipeline outputs
@@ -86,7 +91,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Documentation & Baseline | 0/5 | Complete    | 2026-03-17 |
-| 2. Validation & Suppression Hardening | 0/3 | Complete    | 2026-03-17 |
-| 3. Test Coverage for Fragile Areas | 0/TBD | Not started | - |
+| 1. Documentation & Baseline | 5/5 | Complete    | 2026-03-17 |
+| 2. Validation & Suppression Hardening | 3/3 | Complete    | 2026-03-17 |
+| 3. Test Coverage for Fragile Areas | 0/6 | Ready for execution | - |
 | 4. Reproducibility & Onboarding | 0/TBD | Not started | - |
