@@ -17,6 +17,24 @@ from src.load.config import load_config
 
 
 def main(config_path: Path | None = None) -> None:
+    """Full pipeline integration test: convert_all → validate_all → clean_all → assemble_clean.
+
+    Runs the complete 4-stage pipeline in sequence via subprocess calls, verifying each stage
+    completes successfully (exit code 0) before proceeding. Checks that expected outputs exist:
+    parquet files, reports/structural_validation.md, parquet_clean/, derived/patient_level.parquet.
+
+    Designed for CI or pre-deployment validation. Requires complete config and source data.
+    May take several minutes on real datasets. For CI, config can point to minimal sample data.
+
+    Prints progress for each stage and verification checks to stdout. Exits with code 0 if
+    all stages pass, 1 if any stage fails or outputs missing.
+
+    Args:
+        config_path: Optional path to config/paths.toml (uses default if None)
+
+    Raises:
+        SystemExit: If any pipeline stage fails (non-zero exit code) or required outputs missing
+    """
     print("=" * 60)
     print("HL PIPELINE SMOKE TEST")
     print("=" * 60)

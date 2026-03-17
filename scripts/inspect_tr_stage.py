@@ -21,6 +21,20 @@ HL_HISTOLOGY = set(range(9650, 9668))
 
 
 def main(config_path: Path | None = None):
+    """Inspect TUMOR_REGISTRY table schemas and stage-related columns.
+
+    Debugging utility to explore TUMOR_REGISTRY1/2/3 Parquet files. Prints row counts,
+    stage-related column names, unique values for stage columns (first 20), HISTOLOGY counts
+    (including HL-specific codes 9650-9667), and unique patient IDs.
+
+    Run on HPC where parquet files are available. Helps understand what stage variables
+    exist in tumor registry data before designing validation logic.
+
+    Prints output to stdout showing table name, row count, stage columns, and sample values.
+
+    Args:
+        config_path: Optional path to config/paths.toml (uses default if None)
+    """
     paths = load_config(config_path)
     _, filenames = parse_datastructure(paths.datastructure_path)
     parquet_dir = paths.parquet_dir

@@ -20,6 +20,18 @@ except Exception as e:
     _has_config = False
 
 def main() -> None:
+    """Quick diagnostic check for insurance/payer output files and DUAL_ELIGIBLE presence.
+
+    Verifies that derived/encounter_payer_summary.parquet and reports/*.csv/md files exist,
+    and confirms DUAL_ELIGIBLE column is present (added in Phase 16). Prints paths, status,
+    and column checks to stdout.
+
+    Used as a diagnostic tool after running assemble_clean.py or build_insurance_summary.py
+    to verify insurance summary outputs are complete. Tolerates missing config (falls back to
+    default project_root/derived and project_root/reports paths).
+
+    Prints status for 4 checks: parquet source, CSV summary, markdown summary, dual-eligible prevalence CSV.
+    """
     config_path = Path(sys.argv[1]) if len(sys.argv) > 1 else None
     if not _has_config:
         derived_dir = PROJECT_ROOT / "derived"

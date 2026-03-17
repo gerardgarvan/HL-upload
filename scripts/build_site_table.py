@@ -25,7 +25,18 @@ from src.report.site_table import (
 
 
 def _build_table_map(table_filenames: list[str], parquet_dir: Path) -> dict[str, Path]:
-    """Build mapping from table_name -> parquet_path."""
+    """Build mapping from CDM table name to parquet file path.
+
+    Resolves table names using schema.py naming rules (e.g., "DEMOGRAPHIC_Mailhot_V1" → "DEMOGRAPHIC").
+    Used to locate source tables for site table generation (DEMOGRAPHIC, ENCOUNTER, TUMOR_REGISTRY, etc.).
+
+    Args:
+        table_filenames: List of CSV filenames from datastructure.txt
+        parquet_dir: Directory containing parquet files
+
+    Returns:
+        Dict mapping table name to parquet path (e.g., {"DEMOGRAPHIC": Path("parquet/DEMOGRAPHIC_Mailhot_V1.parquet")})
+    """
     table_map: dict[str, Path] = {}
     for filename in table_filenames:
         stem = Path(filename).stem
@@ -36,6 +47,24 @@ def _build_table_map(table_filenames: list[str], parquet_dir: Path) -> dict[str,
 
 
 def main(config_path: Path | None = None) -> None:
+    """Build site-stratified demographic summary table (Age, Race, Ethnicity, Stage, Insurance).
+
+    Generates per-site (partner) demographic summaries for the HL cohort. Each patient is
+    assigned to their predominant SOURCE (site with most encounters). TMA and TMC are combined
+    into TM. Outputs CSV, Markdown table, and HTML table to reports/.
+
+    Small-cell suppression applied via flag_small_cell per REQ-05 for counts 1-10.
+
+    Produces three output formats:
+    - reports/site_stratified_table.csv (raw data)
+    - reports/site_stratified_table.md (markdown table for documentation)
+    - reports/site_stratified_table.html (HTML table for reports)
+
+    Prints progress and output paths to stdout.
+
+    Args:
+        config_path: Optional path to config/paths.toml (uses default if None)
+    """
     print("=" * 60)
     print("HL SITE STRATIFIED TABLE — Age, Race, Ethnicity, Stage, Insurance")
     print("=" * 60)

@@ -60,7 +60,18 @@ from src.validate.values import (
 
 
 def _build_table_map(table_filenames: list[str], parquet_dir: Path) -> dict[str, Path]:
-    """Build mapping from table_name -> parquet_path."""
+    """Build mapping from CDM table name to parquet file path.
+
+    Resolves table names using schema.py naming rules (e.g., "DEMOGRAPHIC_Mailhot_V1" → "DEMOGRAPHIC").
+    Used to locate parquet files for value validation and temporal checks.
+
+    Args:
+        table_filenames: List of CSV filenames from datastructure.txt
+        parquet_dir: Directory containing parquet files
+
+    Returns:
+        Dict mapping table name to parquet path (e.g., {"DEMOGRAPHIC": Path("parquet/DEMOGRAPHIC_Mailhot_V1.parquet")})
+    """
     table_map: dict[str, Path] = {}
     for filename in table_filenames:
         stem = Path(filename).stem
@@ -73,10 +84,26 @@ def _build_table_map(table_filenames: list[str], parquet_dir: Path) -> dict[str,
 def _load_birth_death_lookup(
     table_map: dict[str, Path],
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """Load DEMOGRAPHIC birth dates and DEATH dates for cross-table checks.
+    """Load DEMOGRAPHIC birth dates and DEATH dates for cross-table temporal validation.
 
-    For patients with BIRTH_DATE == 1900-01-01 (masked), attempts recovery
-    from TUMOR_REGISTRY using AGE_AT_DIAGNOSIS + DATE_OF_DIAGNOSIS.
+    Reads DEMOGRAPHIC.BIRTH_DATE and DEATH.DEATH_DATE into lookup DataFrames for validating that
+    event dates (ADMIT_DATE, DX_DATE, etc.) fall between birth and death. For patients with
+    BIRTH_DATE == 1900-01-01 (masked per HIPAA), attempts recovery using TUMOR_REGISTRY.AGE_AT_DIAGNOSIS
+    and DATE_OF_DIAGNOSIS (approximates birth year as dx_year - age, creates 1900-01-01 date).
+
+    Masked birth date recovery helps reduce false positives for "before birth" temporal validation
+    flags, though recovered dates are approximate (year-level precision only).
+
+    Prints progress messages for masked birth date recovery attempts.
+
+    Args:
+        table_map: Dict mapping table names to parquet paths (must include DEMOGRAPHIC, DEATH, TUMOR_REGISTRY*)
+
+    Returns:
+        Tuple of (birth_df, death_df) where:
+        - birth_df: DataFrame with columns (PATID: String, BIRTH_DATE: Date), recovered masked dates if possible
+        - death_df: DataFrame with columns (PATID: String, DEATH_DATE: Date)
+        If tables missing, returns empty DataFrames with correct schema
     """
     demo_path = table_map.get("DEMOGRAPHIC")
     if not demo_path or not demo_path.exists():
@@ -176,7 +203,23 @@ def _validate_against_birth(
     birth_df: pl.DataFrame,
     date_cols: list[str],
 ) -> pl.DataFrame:
-    """Flag date columns with values before patient's birth date."""
+    """Add temporal validation flags for date columns occurring before patient's birth date.
+
+    Joins birth_df (PATID, BIRTH_DATE) to df and creates {col}_val_before_birth flag columns
+    (Int8, 0/1) for each date column. Flag = 1 when date < BIRTH_DATE (excluding nulls and
+    masked birth dates 1900-01-01). Used to identify data quality issues where event dates
+    precede birth dates (impossible temporal relationship).
+
+    Drops BIRTH_DATE column after flagging to avoid schema pollution.
+
+    Args:
+        df: DataFrame with PATID and date columns to validate
+        birth_df: Lookup DataFrame with PATID and BIRTH_DATE columns
+        date_cols: List of date column names to validate (from _get_date_columns)
+
+    Returns:
+        DataFrame with added {col}_val_before_birth flag columns (Int8), BIRTH_DATE dropped
+    """
     if birth_df.is_empty() or not date_cols:
         return df
 
@@ -206,7 +249,23 @@ def _validate_against_death(
     death_df: pl.DataFrame,
     date_cols: list[str],
 ) -> pl.DataFrame:
-    """Flag date columns with values after patient's death date."""
+    """Add temporal validation flags for date columns occurring after patient's death date.
+
+    Joins death_df (PATID, DEATH_DATE) to df and creates {col}_val_after_death flag columns
+    (Int8, 0/1) for each date column. Flag = 1 when date > DEATH_DATE (excluding nulls). Used
+    to identify data quality issues where event dates occur after death dates (impossible
+    temporal relationship suggesting retrospective data entry errors or death date errors).
+
+    Drops DEATH_DATE column after flagging to avoid schema pollution.
+
+    Args:
+        df: DataFrame with PATID and date columns to validate
+        death_df: Lookup DataFrame with PATID and DEATH_DATE columns
+        date_cols: List of date column names to validate (from _get_date_columns)
+
+    Returns:
+        DataFrame with added {col}_val_after_death flag columns (Int8), DEATH_DATE dropped
+    """
     if death_df.is_empty() or not date_cols:
         return df
 
@@ -227,7 +286,18 @@ def _validate_against_death(
 
 
 def _get_date_columns(df: pl.DataFrame) -> list[str]:
-    """Return date/datetime column names, excluding existing flag columns."""
+    """Return list of date/datetime column names, excluding existing validation flag columns.
+
+    Filters for columns with dtype pl.Date or pl.Datetime, excluding columns with "_val_"
+    infix (which are validation flag columns added in previous passes). Used to identify
+    which columns need temporal validation (before birth, after death, future dates).
+
+    Args:
+        df: DataFrame to inspect for date columns
+
+    Returns:
+        List of date/datetime column names (excluding flag columns)
+    """
     return [c for c in df.columns if df.schema[c] in (pl.Date, pl.Datetime) or isinstance(df.schema[c], pl.Datetime) if "_val_" not in c]
 
 
@@ -235,10 +305,24 @@ def _compute_hl_timeline(
     table_map: dict[str, Path],
     reports_dir: Path,
 ) -> dict:
-    """Compute HL disease timeline: diagnosis to first treatment.
+    """Compute HL disease timeline metrics from first diagnosis to first treatment (cross-table summary).
 
-    Cross-table summary (not per-row flags). Checks DIAGNOSIS, PROCEDURES,
-    PRESCRIBING, and TUMOR_REGISTRY for treatment dates.
+    Aggregates DIAGNOSIS (HL ICD codes), PROCEDURES (SCT/radiation CPTs), PRESCRIBING (chemo J-codes),
+    and TUMOR_REGISTRY (treatment dates) to compute: (1) Total HL patients; (2) Patients with treatment;
+    (3) Median days from first HL DX to first treatment; (4) Patients with treatment before DX
+    (temporal flag); (5) Patients with >365 day DX-to-treatment gap; (6) Distribution of gap buckets.
+
+    This is a cross-table analysis (not per-row flags). Used in Section 5 (Temporal Consistency)
+    of the values_validation.md report to identify temporal anomalies at the cohort level.
+
+    Args:
+        table_map: Dict mapping table names to parquet paths (must include DIAGNOSIS, optionally PROCEDURES,
+            PRESCRIBING, TUMOR_REGISTRY*)
+        reports_dir: Output directory for reports (currently unused but reserved for future CSV output)
+
+    Returns:
+        Dict with keys: total_patients (int), with_treatment (int), median_dx_to_tx (float or None),
+        flagged_before_dx (int), flagged_over_365 (int), distribution_buckets (dict mapping bucket name to count)
     """
     result: dict = {
         "total_patients": 0,
@@ -409,7 +493,21 @@ def _compute_hl_timeline(
 
 
 def _section_overview(report_data: dict) -> str:
-    """Generate Section 1: Validation Overview."""
+    """Generate Section 1: Validation Overview for values_validation.md report.
+
+    Creates markdown table showing per-table summary: total rows, flag columns added, and rows
+    with any validation flag. Provides quick overview of validation scope and impact across all
+    CDM tables.
+
+    Small-cell suppression applied via flag_small_cell for flagged row counts per REQ-05.
+
+    Args:
+        report_data: Dict mapping table_name to stats dict (keys: total_rows, flag_columns_added,
+            rows_with_any_flag, flags)
+
+    Returns:
+        Markdown string for Section 1 (validation overview) including summary table
+    """
     lines: list[str] = []
     lines.append("## 1. Validation Overview\n")
 
@@ -426,7 +524,25 @@ def _section_overview(report_data: dict) -> str:
 
 
 def _section_valueset(report_data: dict) -> str:
-    """Generate Section 2: Value Set Conformance."""
+    """Generate Section 2: Value Set Conformance for values_validation.md report.
+
+    Creates markdown section showing coded field validation results per table. For each coded
+    field (RACE, SEX, DX_TYPE, etc.), shows count of flagged rows (invalid codes not in PCORnet
+    value sets), total rows, and invalid code rate. Highlights fields with >5% invalid codes
+    with ⚠ symbol.
+
+    Small-cell suppression applied via flag_small_cell for flagged counts per REQ-05.
+
+    Coded field validation helps identify data collection errors, vendor-specific codes, or
+    PCORnet compliance issues (e.g., unexpected RACE codes, missing DX_TYPE).
+
+    Args:
+        report_data: Dict mapping table_name to stats dict (keys: total_rows, flags with *_val_code keys)
+
+    Returns:
+        Markdown string for Section 2 (value set conformance) including per-table subsections
+        with field validation tables
+    """
     lines: list[str] = []
     lines.append("## 2. Value Set Conformance\n")
 
@@ -455,7 +571,27 @@ def _section_valueset(report_data: dict) -> str:
 
 
 def _section_plausibility(report_data: dict) -> str:
-    """Generate Section 3: Plausibility Checks."""
+    """Generate Section 3: Plausibility Checks for values_validation.md report.
+
+    Creates markdown section showing vital signs and lab result plausibility validation. For vitals
+    (HT, WT, SYSTOLIC, DIASTOLIC), shows out-of-range counts and clinical ranges checked. For lab
+    results (WBC, ANC, HGB, PLT, CRCL), shows out-of-range and missing RESULT_UNIT counts, plus
+    table of HL-specific lab ranges checked (name, LOINC, range, unit).
+
+    Small-cell suppression applied via flag_small_cell for flagged counts per REQ-05.
+
+    Plausibility checks help identify data entry errors (impossible vital signs like 999 weight),
+    unit conversion errors (cm vs inches for height), and missing metadata (RESULT_UNIT required
+    for correct interpretation of RESULT_NUM).
+
+    Args:
+        report_data: Dict mapping table_name to stats dict (keys: total_rows, flags with *_val_range
+            and RESULT_UNIT_val_missing keys)
+
+    Returns:
+        Markdown string for Section 3 (plausibility checks) including vital signs subsection, lab
+        results subsection, and lab ranges reference table
+    """
     lines: list[str] = []
     lines.append("## 3. Plausibility Checks\n")
 
@@ -511,7 +647,27 @@ def _section_plausibility(report_data: dict) -> str:
 
 
 def _section_icd_concordance(concordance_data: dict) -> str:
-    """Generate Section 4: ICD Version-Date Concordance."""
+    """Generate Section 4: ICD Version-Date Concordance for values_validation.md report.
+
+    Creates markdown section validating that ICD-9 codes only appear before October 2015 and ICD-10
+    codes only appear after July 2015 (with grace period Jul-Jan 2016). Shows total DX records,
+    flagged concordance violations, and per-partner breakdown (total DX, ICD-9 count, ICD-10 count,
+    pre-Oct-2015 ICD-10 count, flagged count, mapped status).
+
+    Small-cell suppression applied via flag_small_cell for counts per REQ-05.
+
+    ICD version-date concordance helps identify: (1) Data collection errors (ICD-10 codes before
+    transition date); (2) Mapped partners (AMS, UMI) who retrospectively converted ICD-9 → ICD-10;
+    (3) Grace period compliance (both versions allowed Jul 2015 - Jan 2016).
+
+    Args:
+        concordance_data: Dict with keys: total_dx (int), total_flagged (int), partner_breakdown
+            (list of dicts with keys: partner, total, icd9, icd10, pre_transition_icd10, flagged, mapped)
+
+    Returns:
+        Markdown string for Section 4 (ICD concordance) including summary stats, per-partner breakdown
+        table, and grace period note
+    """
     lines: list[str] = []
     lines.append("## 4. ICD Version-Date Concordance\n")
 
@@ -551,7 +707,30 @@ def _section_icd_concordance(concordance_data: dict) -> str:
 
 
 def _section_temporal(report_data: dict, hl_timeline: dict) -> str:
-    """Generate Section 5: Temporal Consistency."""
+    """Generate Section 5: Temporal Consistency for values_validation.md report.
+
+    Creates comprehensive markdown section showing temporal validation results: (1) Encounter checks
+    (admit > discharge, same-day encounters); (2) Future dates table showing all date columns with
+    future values; (3) Before-birth / after-death flags table; (4) Enrollment date ordering (ENR_START
+    > ENR_END); (5) HL disease timeline cross-table summary (DX→treatment median days, treatment before
+    DX flags, >365 day gap flags, distribution buckets).
+
+    Small-cell suppression applied via flag_small_cell for all counts per REQ-05.
+
+    Temporal consistency checks help identify: data entry errors (admit > discharge), future dates
+    (suggesting system clock issues), biological impossibilities (events before birth or after death),
+    and clinically significant delays (>365 day DX-to-treatment gap).
+
+    Args:
+        report_data: Dict mapping table_name to stats dict (keys: total_rows, flags with temporal
+            validation keys like _val_admit_discharge, *_val_future, *_val_before_birth, *_val_after_death)
+        hl_timeline: Dict with keys: total_patients, with_treatment, median_dx_to_tx, flagged_before_dx,
+            flagged_over_365, distribution_buckets (from _compute_hl_timeline)
+
+    Returns:
+        Markdown string for Section 5 (temporal consistency) including encounter checks, future dates
+        table, before-birth/after-death table, enrollment checks, and HL timeline summary with distribution
+    """
     lines: list[str] = []
     lines.append("## 5. Temporal Consistency\n")
 
@@ -637,7 +816,27 @@ def _section_temporal(report_data: dict, hl_timeline: dict) -> str:
 
 
 def _section_tumor_registry(report_data: dict) -> str:
-    """Generate Section 6: Tumor Registry Validation."""
+    """Generate Section 6: Tumor Registry Validation for values_validation.md report.
+
+    Creates markdown section showing tumor registry-specific validation results for TUMOR_REGISTRY1/2/3
+    tables. Per-table subsections show validation checks: (1) HISTOLOGY (HL codes 9650-9667); (2) STAGE_GROUP
+    format (Ann Arbor staging I-IV); (3) B_SYMPTOMS (B symptoms present/absent codes); (4) CS_SSF1 (B symptoms
+    site-specific factor); (5) AGE_AT_DIAGNOSIS range (0-120); (6) PRIMARY_SITE (HL primary sites C77.x);
+    (7) Treatment timing (DT_SURG, DT_RAD, DT_CHEMO before DATE_OF_DIAGNOSIS).
+
+    Small-cell suppression applied via flag_small_cell for flagged counts per REQ-05.
+
+    Notes that only ORL, TMH, UFH partners contribute tumor registry data (other partners don't collect
+    cancer registry variables).
+
+    Args:
+        report_data: Dict mapping table_name to stats dict (keys: total_rows, flags with tumor registry
+            validation keys like HISTOLOGY_val_hl, STAGE_GROUP_val_format, *_val_before_dx)
+
+    Returns:
+        Markdown string for Section 6 (tumor registry validation) including per-table subsections with
+        validation check tables
+    """
     lines: list[str] = []
     lines.append("## 6. Tumor Registry Validation\n")
 
@@ -690,7 +889,24 @@ def _write_temporal_issues_csv(
     hl_timeline: dict,
     reports_dir: Path,
 ) -> None:
-    """Write reports/temporal_issues.csv."""
+    """Write reports/temporal_issues.csv with detailed temporal validation findings.
+
+    Creates CSV with one row per temporal check failure type per table: admit/discharge order,
+    same-day encounters, future dates, before-birth dates, after-death dates, enrollment date
+    order (ENR_START > ENR_END). Also includes HL timeline cross-table summary rows (treatment
+    before DX, DX-to-treatment gap >365 days).
+
+    Small-cell suppression applied via _suppress (replaces 1-10 with dash) per REQ-05 for CSV output.
+
+    CSV columns: table, check_type, flagged_count (suppressed), total_rows, flag_rate (percentage string).
+
+    Args:
+        report_data: Dict mapping table_name to stats dict (keys: total_rows, flags with temporal
+            validation keys)
+        hl_timeline: Dict with keys: total_patients, flagged_before_dx, flagged_over_365 (from
+            _compute_hl_timeline)
+        reports_dir: Output directory for reports
+    """
     rows: list[dict] = []
 
     for tbl in sorted(report_data.keys()):
@@ -801,7 +1017,22 @@ def _write_tumor_registry_csv(
     report_data: dict,
     reports_dir: Path,
 ) -> None:
-    """Write reports/tumor_registry_validation.csv."""
+    """Write reports/tumor_registry_validation.csv with detailed tumor registry validation findings.
+
+    Creates CSV with one row per validation check per tumor registry table: histology (HL codes
+    9650-9667), stage format (Ann Arbor I-IV), B symptoms codes, AGE_AT_DIAGNOSIS range, PRIMARY_SITE
+    (HL primary sites), and treatment timing (treatment dates before diagnosis date).
+
+    Small-cell suppression applied via _suppress (replaces 1-10 with dash) per REQ-05 for CSV output.
+
+    CSV columns: table, check (check type), field (column name), valid_count (suppressed), invalid_count
+    (suppressed), invalid_pct (percentage string).
+
+    Args:
+        report_data: Dict mapping table_name to stats dict (keys: total_rows, flags with tumor registry
+            validation keys like HISTOLOGY_val_hl, *_val_before_dx)
+        reports_dir: Output directory for reports
+    """
     rows: list[dict] = []
 
     check_map = {
@@ -859,7 +1090,17 @@ def _write_tumor_registry_csv(
 
 
 def _suppress(value: int) -> str:
-    """Small-cell suppression: replace counts 1-10 with dash."""
+    """Replace small-cell counts (1-10) with dash for CSV output per HIPAA de-identification.
+
+    Used in CSV reports where values must be truly suppressed (not just flagged). Markdown
+    reports use flag_small_cell() which adds ⚠ warning but keeps value visible for debugging.
+
+    Args:
+        value: Count to potentially suppress
+
+    Returns:
+        "-" if 1 <= value <= 10, otherwise string representation of value
+    """
     if 1 <= value <= SMALL_CELL_THRESHOLD:
         return "-"
     return str(value)
@@ -876,7 +1117,29 @@ def _build_concordance_data(
     report_data: dict,
     partner_col: str = "SOURCE",
 ) -> dict:
-    """Build ICD concordance data for report and CSV output."""
+    """Build ICD version-date concordance summary data for Section 4 report and CSV output.
+
+    Aggregates DIAGNOSIS table to compute: (1) Total DX records; (2) Total flagged concordance
+    violations (ICD-10 before Oct 2015 transition, excluding grace period Jul 2015 - Jan 2016);
+    (3) Per-partner breakdown (total DX, ICD-9 count, ICD-10 count, pre-transition ICD-10 count,
+    flagged count, mapped partner indicator).
+
+    Auto-detects ICD version using uppercase letter regex (ICD-10 starts with letter, ICD-9 is
+    all digits). Identifies mapped partners (AMS, UMI who retrospectively converted ICD-9 → ICD-10)
+    using detect_mapped_partners() from src/validate/values.py.
+
+    Args:
+        table_map: Dict mapping table names to parquet paths (must include DIAGNOSIS)
+        mapped_partners: Set of partner codes known to have ICD-9 → ICD-10 mapping (AMS, UMI)
+        report_data: Dict mapping table_name to stats dict (used to extract total flagged count
+            from DIAGNOSIS.DX_val_icd_concordance if available)
+        partner_col: Column name for partner/site grouping (default "SOURCE")
+
+    Returns:
+        Dict with keys: total_dx (int), total_flagged (int), partner_breakdown (list of dicts
+        with keys: partner, total, icd9, icd10, pre_transition_icd10, flagged, mapped)
+        Returns empty dict if DIAGNOSIS table not found or missing required columns
+    """
     diag_path = table_map.get("DIAGNOSIS")
     if not diag_path or not diag_path.exists():
         return {}
@@ -955,7 +1218,21 @@ def _write_icd_concordance_csv(
     concordance_data: dict,
     reports_dir: Path,
 ) -> None:
-    """Write reports/icd_concordance.csv."""
+    """Write reports/icd_concordance.csv with detailed per-partner ICD version concordance data.
+
+    Creates CSV with one row per partner showing: total DX records, ICD-9 count, ICD-10 count,
+    pre-transition ICD-10 count (before Oct 2015), flagged concordance violations, and mapped
+    partner indicator (True for AMS/UMI who retrospectively converted ICD-9 → ICD-10).
+
+    Small-cell suppression applied via _suppress (replaces 1-10 with dash) per REQ-05 for CSV output.
+
+    CSV columns: partner, total_dx, icd9_count (suppressed), icd10_count (suppressed),
+    pre_transition_icd10 (suppressed), flagged_count (suppressed), is_mapped (bool).
+
+    Args:
+        concordance_data: Dict with key "partner_breakdown" (list of dicts from _build_concordance_data)
+        reports_dir: Output directory for reports
+    """
     if "partner_breakdown" not in concordance_data:
         return
 
@@ -985,6 +1262,41 @@ def _write_icd_concordance_csv(
 
 
 def main(config_path: Path | None = None) -> None:
+    """Phase 4: Value and temporal validation for OneFlorida+ PCORnet CDM with HL-specific checks.
+
+    Entry point for deep value validation pipeline. Performs six validation categories:
+    (1) Coded field validation against PCORnet value sets (RACE, SEX, DX_TYPE, etc.);
+    (2) Vital/lab plausibility (HT, WT, vitals ranges; HL-specific lab LOINC ranges for WBC, ANC, HGB, PLT, CRCL);
+    (3) ICD version-date concordance (ICD-10 transition Oct 2015 with grace period Jul 2015 - Jan 2016);
+    (4) Temporal consistency (future dates, before-birth dates, after-death dates, admit/discharge order,
+        enrollment date order, encounter temporal relationships);
+    (5) HL disease timeline (cross-table DX→treatment gap analysis from DIAGNOSIS, PROCEDURES, PRESCRIBING,
+        TUMOR_REGISTRY);
+    (6) Tumor registry validation (HISTOLOGY HL codes 9650-9667, STAGE_GROUP Ann Arbor I-IV, B_SYMPTOMS codes,
+        AGE_AT_DIAGNOSIS 0-120, PRIMARY_SITE HL C77.x, treatment timing before DX).
+
+    Adds binary validation flag columns (Int8, 0/1) to each table and writes flagged Parquet back to
+    parquet_dir in-place. Generates four outputs: reports/values_validation.md (main report with 6 sections),
+    reports/temporal_issues.csv (detailed temporal findings), reports/tumor_registry_validation.csv (tumor
+    registry findings), reports/icd_concordance.csv (per-partner ICD concordance).
+
+    Small-cell suppression: Markdown report uses flag_small_cell (adds ⚠ for 1-10), CSV files use
+    _suppress (replaces 1-10 with dash) per REQ-05.
+
+    Designed for HPC interactive sessions (srun --pty bash). Typical run time: 10-15 minutes depending
+    on table count and row counts. Uses lazy evaluation for memory efficiency on large tables. Sequential
+    table processing.
+
+    Creates reports/ directory if it doesn't exist. Prints progress for each validation category (tables
+    checked, flags added, rows flagged) to stdout. Final summary shows total tables validated, total flag
+    columns added, total rows flagged, elapsed time, and report paths.
+
+    Args:
+        config_path: Optional path to config/paths.toml (uses default if None)
+
+    Raises:
+        SystemExit: If critical error occurs (missing config, parquet read/write failures, etc.)
+    """
     print("=" * 60)
     print("HL DATA LOADING & CLEANING — VALUE & TEMPORAL VALIDATION")
     print("=" * 60)

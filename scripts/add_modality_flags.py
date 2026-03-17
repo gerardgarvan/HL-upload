@@ -21,6 +21,18 @@ from src.load.schema import parse_datastructure, resolve_table_name
 
 
 def _build_table_map(table_filenames: list[str], parquet_dir: Path) -> dict[str, Path]:
+    """Build mapping from CDM table name to parquet file path.
+
+    Resolves table names using schema.py naming rules (e.g., "DEMOGRAPHIC_Mailhot_V1" → "DEMOGRAPHIC").
+    Used to locate source tables (PROCEDURES, LAB_RESULT_CM, DIAGNOSIS) for modality flag lookups.
+
+    Args:
+        table_filenames: List of CSV filenames from datastructure.txt
+        parquet_dir: Directory containing parquet files
+
+    Returns:
+        Dict mapping table name to parquet path (e.g., {"DEMOGRAPHIC": Path("parquet/DEMOGRAPHIC_Mailhot_V1.parquet")})
+    """
     table_map: dict[str, Path] = {}
     for filename in table_filenames:
         stem = Path(filename).stem
@@ -30,6 +42,23 @@ def _build_table_map(table_filenames: list[str], parquet_dir: Path) -> dict[str,
 
 
 def main(config_path: Path | None = None) -> None:
+    """Add modality treatment flags to existing patient_level.parquet.
+
+    Reads patient_level.parquet from derived/, looks up treatment codes from Outcomes.csv
+    (MODALITY columns: Chemotherapy, Radiation, Stem Cell Transplant), adds binary flag columns
+    (HAD_CHEMO, HAD_RADIATION, HAD_SCT, etc.), and writes back to derived/patient_level.parquet.
+
+    This is a standalone utility script for re-adding modality flags without re-running
+    the full assemble_clean.py pipeline. Typically used when Outcomes.csv is updated.
+
+    Outputs patient_level.parquet with added modality columns to derived/ directory.
+
+    Args:
+        config_path: Optional path to config/paths.toml (uses default if None)
+
+    Raises:
+        SystemExit: If patient_level.parquet or Outcomes.csv not found
+    """
     paths = load_config(config_path)
     _, table_filenames = parse_datastructure(paths.datastructure_path)
     table_map = _build_table_map(table_filenames, paths.parquet_dir)

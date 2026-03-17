@@ -38,7 +38,18 @@ from src.validate.structural import flag_small_cell
 
 
 def _build_table_map(table_filenames: list[str], parquet_dir: Path) -> dict[str, Path]:
-    """Build mapping from table_name -> parquet_path."""
+    """Build mapping from CDM table name to parquet file path.
+
+    Resolves table names using schema.py naming rules (e.g., "DEMOGRAPHIC_Mailhot_V1" → "DEMOGRAPHIC").
+    Used to locate flagged parquet files from parquet_dir for patient-level aggregation.
+
+    Args:
+        table_filenames: List of CSV filenames from datastructure.txt
+        parquet_dir: Directory containing validated+flagged parquet files (Phase 5 output)
+
+    Returns:
+        Dict mapping table name to parquet path (e.g., {"DEMOGRAPHIC": Path("parquet/DEMOGRAPHIC_Mailhot_V1.parquet")})
+    """
     table_map: dict[str, Path] = {}
     for filename in table_filenames:
         stem = Path(filename).stem
@@ -54,6 +65,27 @@ def _build_table_map(table_filenames: list[str], parquet_dir: Path) -> dict[str,
 
 
 def main(config_path: Path | None = None) -> None:
+    """Phase 6: Copy validated+flagged Parquet to parquet_clean/, build derived patient-level, generate reports.
+
+    Orchestrates the final assembly phase: copies validated+flagged Parquet files from parquet_dir
+    to parquet_clean/ (for archival/distribution), builds patient_level.parquet with per-patient
+    aggregations, adds modality treatment flags from Outcomes.csv, builds encounter_payer_summary.parquet,
+    and generates DATA_QUALITY_REPORT.md and CLEANING_DECISIONS.md.
+
+    Small-cell suppression applied via flag_small_cell per REQ-05 for all report counts.
+
+    Designed for HPC interactive sessions (srun --pty bash). Typical run time: 2-5 minutes depending
+    on table count and patient-level aggregation complexity.
+
+    Creates output directories if they don't exist: parquet_clean/, derived/, reports/, reports/figures/.
+    Prints progress for each step (copy counts, patient-level row count, report paths) to stdout.
+
+    Args:
+        config_path: Optional path to config/paths.toml (uses default if None)
+
+    Raises:
+        SystemExit: If critical error occurs (missing source files, write failures, etc.)
+    """
     print("=" * 60)
     print("HL ASSEMBLE CLEAN — Parquet Copy, Derived, Reports")
     print("=" * 60)

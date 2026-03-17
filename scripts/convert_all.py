@@ -26,6 +26,30 @@ from src.load.schema import parse_datastructure, resolve_table_name
 
 
 def main(config_path: Path | None = None) -> None:
+    """Phase 2: Convert all OneFlorida+ PCORnet CDM CSV files to typed Parquet with snappy compression.
+
+    Entry point for the conversion pipeline. Reads 22 CSV tables listed in datastructure.txt,
+    auto-detects and converts date columns (using 4-format fallback: DATETIME, DATE9, YYYYMMDD, MM/DD/YYYY),
+    writes Parquet files with snappy compression, and produces file_inventory.csv with per-table
+    metadata (row counts, file sizes, date columns detected/converted).
+
+    Re-converts all tables on every run (no skip-existing logic; see CONCERNS.md for incremental
+    conversion discussion). Uses mtime check to skip tables where CSV hasn't changed since last run.
+
+    Designed for HPC interactive sessions (srun --pty bash), not batch SLURM jobs. Typical run
+    time: 5-10 minutes for full dataset depending on CSV sizes. Exits with code 1 if any table
+    conversion fails (fail-fast behavior to avoid cascading errors).
+
+    Creates parquet_dir if it doesn't exist. Writes file_inventory.csv to parquet_dir parent directory.
+    Prints progress for each table (row counts, date columns found, elapsed time) and final summary
+    (total rows, total Parquet size, overall elapsed time) to stdout.
+
+    Args:
+        config_path: Optional path to config/paths.toml (uses default if None)
+
+    Raises:
+        SystemExit: If any table conversion fails or unrecoverable error occurs
+    """
     print("=" * 60)
     print("HL DATA LOADING & CLEANING — CSV TO PARQUET CONVERSION")
     print("=" * 60)

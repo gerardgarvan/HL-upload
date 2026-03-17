@@ -54,7 +54,18 @@ from src.validate.structural import (
 
 
 def _build_table_map(table_filenames: list[str], parquet_dir: Path) -> dict[str, Path]:
-    """Build mapping from table_name -> parquet_path."""
+    """Build mapping from CDM table name to parquet file path.
+
+    Resolves table names using schema.py naming rules (e.g., "DEMOGRAPHIC_Mailhot_V1" → "DEMOGRAPHIC").
+    Used to locate converted parquet files for structural validation.
+
+    Args:
+        table_filenames: List of CSV filenames from datastructure.txt
+        parquet_dir: Directory containing converted parquet files (Phase 2 output)
+
+    Returns:
+        Dict mapping table name to parquet path (e.g., {"DEMOGRAPHIC": Path("parquet/DEMOGRAPHIC_Mailhot_V1.parquet")})
+    """
     table_map: dict[str, Path] = {}
     for filename in table_filenames:
         stem = Path(filename).stem
@@ -72,7 +83,21 @@ def _build_table_map(table_filenames: list[str], parquet_dir: Path) -> dict[str,
 def _section_schema(
     schema_results: list[dict],
 ) -> str:
-    """Generate Section 1: Schema Validation."""
+    """Generate Section 1: Schema Validation markdown section for structural_validation.md.
+
+    Creates markdown section comparing actual parquet schemas against expected schemas from
+    DatasetCoverPage.txt. Shows summary table with expected/actual column counts, matched columns,
+    extra columns, and missing columns. Details section lists specific extra/missing columns for
+    tables with discrepancies. Separate subsection for TUMOR_REGISTRY tables with key variable checks.
+
+    Args:
+        schema_results: List of dicts with keys: table, expected_col_count, actual_col_count, matched,
+            extra (list), missing (list), status ("ok" or "warn"), details (list)
+
+    Returns:
+        Markdown string for Section 1 (schema validation) including summary table, details, and
+        TUMOR_REGISTRY subsection
+    """
     lines: list[str] = []
     lines.append("## 1. Schema Validation\n")
 
@@ -117,7 +142,25 @@ def _section_integrity(
     patid_results: list[dict],
     enc_results: list[dict],
 ) -> str:
-    """Generate Section 2: Key Integrity."""
+    """Generate Section 2: Key Integrity markdown section for structural_validation.md.
+
+    Creates markdown section showing referential integrity checks: (1) PATID uniqueness in DEMOGRAPHIC
+    (total rows, unique IDs, duplicate count); (2) PATID referential integrity (child tables → DEMOGRAPHIC);
+    (3) ENCOUNTERID referential integrity (child tables → ENCOUNTER). Shows orphan counts and percentages
+    for each table. Notes CHP LAB_RESULT_CM skipped per DatasetCoverPage known limitation.
+
+    Small-cell suppression applied via flag_small_cell for orphan counts per REQ-05.
+
+    Args:
+        patid_unique: Dict with keys: total_rows, unique_ids, duplicate_ids, is_unique (bool)
+        patid_results: List of dicts with keys: table, unique_ids, orphan_ids, orphan_pct
+        enc_results: List of dicts with keys: table, unique_encounterids, orphan_encounterids,
+            orphan_pct, skipped (bool), reason, skip_partner
+
+    Returns:
+        Markdown string for Section 2 (key integrity) including uniqueness check, PATID integrity
+        table, ENCOUNTERID integrity table, and notes
+    """
     lines: list[str] = []
     lines.append("## 2. Key Integrity\n")
 
@@ -161,7 +204,24 @@ def _section_completeness(
     comp_df: pl.DataFrame,
     table_map: dict[str, Path],
 ) -> str:
-    """Generate Section 3: Completeness by Partner."""
+    """Generate Section 3: Completeness by Partner markdown section for structural_validation.md.
+
+    Creates markdown section showing per-partner (SOURCE) non-null completeness percentages for key
+    columns: (1) Overview heatmap with demographic columns (PATID, ENCOUNTERID, BIRTH_DATE, SEX, RACE,
+    HISPANIC) using symbols (█ ≥95%, ▓ ≥75%, ▒ ≥50%, ░ ≥25%, · >0%, ○ 0%); (2) Key insurance
+    variables heatmap (PAYER_TYPE_PRIMARY, PAYER_TYPE_SECONDARY, RAW_PAYER_TYPE_PRIMARY); (3) Per-table
+    detail showing completeness for all columns (first 20 columns per table to avoid overwhelming output).
+
+    Helps identify partner-specific data collection gaps (e.g., FLM has no labs, VRT has only death records).
+
+    Args:
+        comp_df: DataFrame with columns: table, SOURCE (or partner column), column, completeness (0.0-1.0), row_count
+        table_map: Dict mapping table names to parquet paths (used to identify available tables)
+
+    Returns:
+        Markdown string for Section 3 (completeness by partner) including overview heatmap, insurance
+        variables heatmap, and per-table detail sections
+    """
     lines: list[str] = []
     lines.append("## 3. Completeness by Partner\n")
 
@@ -285,7 +345,26 @@ def _section_completeness(
 
 
 def _section_missing(missing_df: pl.DataFrame) -> str:
-    """Generate Section 4: Missing Value Classification."""
+    """Generate Section 4: Missing Value Classification markdown section for structural_validation.md.
+
+    Creates markdown section classifying PCORnet coded missing values (NI, UN, OT, empty strings, nulls)
+    in string columns. Shows table with counts of each missing type per table.column, with first 100
+    columns displayed (to avoid overwhelming output). Includes handling rules explaining how each
+    missing value type should be treated in analysis (NI/UN = missing, OT = valid response, empty = null).
+
+    Small-cell suppression applied via flag_small_cell for NI/UN/OT counts per REQ-05.
+
+    This classification supports data quality analysis by distinguishing between types of missingness:
+    truly missing data (NI/UN) vs valid but uncategorized responses (OT).
+
+    Args:
+        missing_df: DataFrame with columns: table, column, ni_count, un_count, ot_count, empty_count,
+            null_count, total_rows
+
+    Returns:
+        Markdown string for Section 4 (missing value classification) including PCORnet coded values
+        table and handling rules explanation
+    """
     lines: list[str] = []
     lines.append("## 4. Missing Value Classification\n")
 
@@ -341,7 +420,34 @@ def _section_cohort(
     cohort_result: dict,
     enrollment_result: dict | None = None,
 ) -> str:
-    """Generate Section 5: HL Cohort Verification."""
+    """Generate Section 5: HL Cohort Verification markdown section for structural_validation.md.
+
+    Creates comprehensive markdown section verifying Hodgkin Lymphoma cohort identification using
+    149 ICD codes (77 ICD-10 C81.xx + 72 ICD-9 201.xx) at 2+ encounters on different dates. Shows:
+    (1) Cohort definition; (2) Code matching summary (ICD-10/ICD-9 counts, DX format detected);
+    (3) Cohort counts comparing Method A (DX_DATE) vs Method B (ADMIT_DATE from linked encounters);
+    (4) Count mismatch investigation (per-partner breakdown, year breakdown) if union != expected ~9,331;
+    (5) Null DX_DATE impact; (6) DX_TYPE mismatches (reported but not used for exclusion per locked
+    decision); (7) ICD version distribution (ICD10_ONLY, ICD9_ONLY, BOTH) with partner breakdown;
+    (8) Enrollment cross-check showing how many HL patients have enrollment records.
+
+    Small-cell suppression applied via flag_small_cell for all counts per REQ-05.
+
+    This verification ensures cohort identification logic is correct and matches expected cohort size
+    from study specification. Differences between Method A and B help identify data quality issues
+    (null dates, linkage problems).
+
+    Args:
+        cohort_result: Dict with keys: dx_format, total_hl_records, unique_patients, method_a_count,
+            method_b_count, a_only, b_only, intersection, union, per_partner (dict), year_breakdown (dict),
+            null_dx_date_records, null_dx_date_patients, dx_type_mismatches (DataFrame), icd_flags (DataFrame),
+            icd_by_partner (dict), union_ids_df (DataFrame)
+        enrollment_result: Optional dict with keys: with_enrollment, without_enrollment, total_hl,
+            coverage_pct, uncovered_by_partner (dict), coverage_summary_by_partner (dict)
+
+    Returns:
+        Markdown string for Section 5 (HL cohort verification) including all subsections listed above
+    """
     lines: list[str] = []
     lines.append("## 5. HL Cohort Verification\n")
 
@@ -519,6 +625,34 @@ def _section_cohort(
 
 
 def main(config_path: Path | None = None) -> None:
+    """Phase 3-4: Structural validation and HL cohort verification for OneFlorida+ PCORnet CDM tables.
+
+    Entry point for validation pipeline. Performs five major validation categories:
+    (1) Schema validation comparing actual parquet schemas against DatasetCoverPage.txt expected columns;
+    (2) Key integrity checking PATID uniqueness in DEMOGRAPHIC and referential integrity for PATID/ENCOUNTERID;
+    (3) Completeness profiling per-partner non-null percentages for key demographic and insurance columns;
+    (4) Missing value classification identifying PCORnet coded values (NI/UN/OT) in string columns;
+    (5) HL cohort verification using 149 ICD codes with dual-date methods (DX_DATE, ADMIT_DATE) and
+        enrollment cross-check.
+
+    Generates three outputs: reports/structural_validation.md (main report), reports/completeness_by_partner.csv
+    (detailed completeness data), reports/cohort_summary.csv (cohort counts and flags).
+
+    Small-cell suppression applied via flag_small_cell per REQ-05 for all report counts.
+
+    Designed for HPC interactive sessions (srun --pty bash). Typical run time: 5-10 minutes depending
+    on table count and row counts. Validation is read-only (no parquet modification).
+
+    Creates reports/ directory if it doesn't exist. Prints progress for each validation category
+    (tables checked, issues found) to stdout. Final summary shows tables validated, schema issues,
+    orphan counts, HL cohort size, enrollment coverage, elapsed time, and report paths.
+
+    Args:
+        config_path: Optional path to config/paths.toml (uses default if None)
+
+    Raises:
+        SystemExit: If critical error occurs (missing config, parquet read failures, etc.)
+    """
     print("=" * 60)
     print("HL DATA LOADING & CLEANING — STRUCTURAL VALIDATION")
     print("=" * 60)

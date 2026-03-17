@@ -16,6 +16,26 @@ from src.load.schema import parse_datastructure
 
 
 def main(config_path: Path | None = None) -> None:
+    """End-to-end smoke test: CSV load, SAS date parsing, Parquet write/read, DuckDB verification.
+
+    Tests the core data loading pipeline using DEMOGRAPHIC table as a representative example.
+    Validates configuration loading, CSV file discovery, SAS DATE9. format parsing ("%d%b%Y"),
+    Parquet write/read roundtrip, and DuckDB compatibility.
+
+    Designed for CI or local quick validation. Uses real DEMOGRAPHIC_Mailhot_V1.csv if available
+    in data_root. Reports compression ratio, row/column counts, date parsing success, and
+    verifies data integrity through read-back assertions.
+
+    Prints progress through 9 steps to stdout. Exits with code 0 on success, 1 on failure.
+
+    Args:
+        config_path: Optional path to config/paths.toml (uses default if None)
+
+    Raises:
+        RuntimeError: If data_root is not a directory
+        FileNotFoundError: If DEMOGRAPHIC_Mailhot_V1.csv not found
+        AssertionError: If shape mismatch or dtype not preserved in roundtrip
+    """
     print("=" * 60)
     print("HL DATA LOADING & CLEANING — SMOKE TEST")
     print("=" * 60)

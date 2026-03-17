@@ -36,7 +36,17 @@ PAYER_CATEGORY_ORDER = [
 
 
 def _normalize_payer(s: pl.Series) -> pl.Series:
-    """Replace null/empty with 'Unknown'."""
+    """Replace null and empty string payer values with 'Unknown' for consistent reporting.
+
+    Used to normalize payer category columns before grouping/aggregation. Ensures all patients
+    have a category (even if "Unknown") to avoid null values in summary tables.
+
+    Args:
+        s: Polars Series of payer category strings (may contain nulls or empty strings)
+
+    Returns:
+        Series with nulls and empty strings replaced by "Unknown", dtype pl.String
+    """
     return pl.Series(
         [("Unknown" if (v is None or v == "") else v) for v in s],
         dtype=pl.String,
@@ -44,7 +54,19 @@ def _normalize_payer(s: pl.Series) -> pl.Series:
 
 
 def _order_categories(df: pl.DataFrame, col: str) -> pl.DataFrame:
-    """Sort rows by PAYER_CATEGORY_ORDER (present first), then others."""
+    """Sort DataFrame rows by standard payer category order for consistent table presentation.
+
+    Uses PAYER_CATEGORY_ORDER (Medicare, Medicaid, Dual eligible, Private, Other government,
+    No payment / Self-pay, Other, Unavailable, Unknown) to sort rows. Categories not in the
+    standard order are sorted last (by their natural order).
+
+    Args:
+        df: DataFrame containing a payer category column
+        col: Name of the payer category column to sort by
+
+    Returns:
+        DataFrame sorted by standard payer category order (in-place sort via temporary _ord column)
+    """
     order = {c: i for i, c in enumerate(PAYER_CATEGORY_ORDER)}
     ord_series = pl.Series(
         [order.get(v, len(order)) for v in df[col].to_list()],
@@ -54,6 +76,35 @@ def _order_categories(df: pl.DataFrame, col: str) -> pl.DataFrame:
 
 
 def main(config_path: Path | None = None) -> None:
+    """Phase 15: Build insurance summary tables and figures from derived/encounter_payer_summary.parquet.
+
+    Generates comprehensive insurance equity reporting outputs: (1) encounter_payer_summary.csv with
+    counts/percentages for all insurance variables; (2) insurance_summary.md with markdown tables for
+    payer at first DX, first chemo, first/last radiation, first/last SCT, cross-tab first DX vs first
+    chemo, payer transition prevalence, dual-eligible prevalence; (3) Treatment-specific cohort CSVs
+    (insurance_summary_chemo.csv, insurance_summary_radiation.csv, insurance_summary_sct.csv) with
+    payer distributions among patients who had that treatment; (4) Per-variable CSVs for each payer
+    timepoint (payer_at_first_dx.csv, payer_at_first_chemo.csv, etc.); (5) Cross-tab CSV; (6) Bar
+    chart PNGs for payer at first DX and first chemo (categories 1-10 excluded from figures per HIPAA).
+
+    Small-cell suppression: Markdown tables use flag_small_cell (adds ⚠ for 1-10), CSV files use
+    _suppress (replaces 1-10 with dash) per REQ-05.
+
+    Adds DUAL_ELIGIBLE column as 0 if missing (for parquet built pre-Phase 16); prints note to
+    re-run assemble_clean.py for real values. Adds HAD_CHEMO, HAD_RADIATION, HAD_SCT as 0 if missing.
+
+    Designed for HPC or local runs. Typical run time: <1 minute. Requires encounter_payer_summary.parquet
+    from assemble_clean.py (Phase 6). Exits early if parquet missing or empty.
+
+    Creates reports/ and reports/figures/ directories if they don't exist. Prints progress for each
+    output file to stdout. Skips figures if matplotlib not available.
+
+    Args:
+        config_path: Optional path to config/paths.toml (uses default if None)
+
+    Raises:
+        SystemExit: Exits with code 0 if encounter_payer_summary.parquet missing or empty (not an error)
+    """
     print("=" * 60)
     print("HL INSURANCE SUMMARY — Tables and Figures")
     print("=" * 60)
@@ -86,6 +137,10 @@ def main(config_path: Path | None = None) -> None:
             df = df.with_columns(pl.lit(0).cast(pl.Int8).alias(col))
 
     n_total = df.height
+    # Cohorts for treatment-specific tables (only people who had that treatment)
+    df_chemo = df.filter(pl.col("HAD_CHEMO") == 1) if "HAD_CHEMO" in df.columns else pl.DataFrame()
+    df_radiation = df.filter(pl.col("HAD_RADIATION") == 1) if "HAD_RADIATION" in df.columns else pl.DataFrame()
+    df_sct = df.filter(pl.col("HAD_SCT") == 1) if "HAD_SCT" in df.columns else pl.DataFrame()
 
     # -------------------------------------------------------------------------
     # encounter_payer_summary.csv: counts and percentages for each insurance variable
@@ -277,17 +332,19 @@ def main(config_path: Path | None = None) -> None:
         md_lines.append("")
 
     # -------------------------------------------------------------------------
-    # Table 2: Counts by payer at first chemo
+    # Table 2: Counts by payer at first chemo (chemo cohort only)
     # -------------------------------------------------------------------------
     col_chemo = "PAYER_CATEGORY_AT_FIRST_CHEMO"
-    if col_chemo in df.columns:
+    if col_chemo in df.columns and not df_chemo.is_empty():
         t2 = (
-            df.with_columns(pl.col(col_chemo).fill_null("Unknown").alias(col_chemo))
+            df_chemo.with_columns(pl.col(col_chemo).fill_null("Unknown").alias(col_chemo))
             .group_by(col_chemo)
             .agg(pl.len().alias("N"))
         )
         t2 = _order_categories(t2, col_chemo)
         md_lines.append("## Counts by payer at first chemotherapy")
+        md_lines.append("")
+        md_lines.append(f"*Among patients who had chemotherapy only (N = {flag_small_cell(df_chemo.height)}).*")
         md_lines.append("")
         md_lines.append("| Payer category | N |")
         md_lines.append("|----------------|---|")
@@ -299,25 +356,27 @@ def main(config_path: Path | None = None) -> None:
             pl.col("N").map_batches(lambda s: pl.Series([_suppress(int(v)) for v in s], dtype=pl.String))
         )
         t2_csv.write_csv(reports_dir / "payer_at_first_chemo.csv")
-        print(f"  payer_at_first_chemo.csv")
+        print(f"  payer_at_first_chemo.csv (N={df_chemo.height})")
     else:
         md_lines.append("## Counts by payer at first chemotherapy")
         md_lines.append("")
-        md_lines.append("(Column not present.)")
+        md_lines.append("(Column not present or no patients had chemotherapy.)")
         md_lines.append("")
 
     # -------------------------------------------------------------------------
-    # Table: Counts by payer at first radiation
+    # Table: Counts by payer at first radiation (radiation cohort only)
     # -------------------------------------------------------------------------
     col_rad_first = "PAYER_CATEGORY_AT_FIRST_RADIATION"
-    if col_rad_first in df.columns:
+    if col_rad_first in df.columns and not df_radiation.is_empty():
         t_rad_first = (
-            df.with_columns(pl.col(col_rad_first).fill_null("Unknown").alias(col_rad_first))
+            df_radiation.with_columns(pl.col(col_rad_first).fill_null("Unknown").alias(col_rad_first))
             .group_by(col_rad_first)
             .agg(pl.len().alias("N"))
         )
         t_rad_first = _order_categories(t_rad_first, col_rad_first)
         md_lines.append("## Counts by payer at first radiation")
+        md_lines.append("")
+        md_lines.append(f"*Among patients who had radiation only (N = {flag_small_cell(df_radiation.height)}).*")
         md_lines.append("")
         md_lines.append("| Payer category | N |")
         md_lines.append("|----------------|---|")
@@ -329,25 +388,27 @@ def main(config_path: Path | None = None) -> None:
             pl.col("N").map_batches(lambda s: pl.Series([_suppress(int(v)) for v in s], dtype=pl.String))
         )
         t_rad_first_csv.write_csv(reports_dir / "payer_at_first_radiation.csv")
-        print(f"  payer_at_first_radiation.csv")
+        print(f"  payer_at_first_radiation.csv (N={df_radiation.height})")
     else:
         md_lines.append("## Counts by payer at first radiation")
         md_lines.append("")
-        md_lines.append("(Column not present.)")
+        md_lines.append("(Column not present or no patients had radiation.)")
         md_lines.append("")
 
     # -------------------------------------------------------------------------
-    # Table: Counts by payer at last radiation
+    # Table: Counts by payer at last radiation (radiation cohort only)
     # -------------------------------------------------------------------------
     col_rad_last = "PAYER_CATEGORY_AT_LAST_RADIATION"
-    if col_rad_last in df.columns:
+    if col_rad_last in df.columns and not df_radiation.is_empty():
         t_rad_last = (
-            df.with_columns(pl.col(col_rad_last).fill_null("Unknown").alias(col_rad_last))
+            df_radiation.with_columns(pl.col(col_rad_last).fill_null("Unknown").alias(col_rad_last))
             .group_by(col_rad_last)
             .agg(pl.len().alias("N"))
         )
         t_rad_last = _order_categories(t_rad_last, col_rad_last)
         md_lines.append("## Counts by payer at last radiation")
+        md_lines.append("")
+        md_lines.append(f"*Among patients who had radiation only (N = {flag_small_cell(df_radiation.height)}).*")
         md_lines.append("")
         md_lines.append("| Payer category | N |")
         md_lines.append("|----------------|---|")
@@ -359,25 +420,27 @@ def main(config_path: Path | None = None) -> None:
             pl.col("N").map_batches(lambda s: pl.Series([_suppress(int(v)) for v in s], dtype=pl.String))
         )
         t_rad_last_csv.write_csv(reports_dir / "payer_at_last_radiation.csv")
-        print(f"  payer_at_last_radiation.csv")
+        print(f"  payer_at_last_radiation.csv (N={df_radiation.height})")
     else:
         md_lines.append("## Counts by payer at last radiation")
         md_lines.append("")
-        md_lines.append("(Column not present.)")
+        md_lines.append("(Column not present or no patients had radiation.)")
         md_lines.append("")
 
     # -------------------------------------------------------------------------
-    # Table: Counts by payer at first SCT
+    # Table: Counts by payer at first SCT (SCT cohort only)
     # -------------------------------------------------------------------------
     col_sct_first = "PAYER_CATEGORY_AT_FIRST_SCT"
-    if col_sct_first in df.columns:
+    if col_sct_first in df.columns and not df_sct.is_empty():
         t_sct_first = (
-            df.with_columns(pl.col(col_sct_first).fill_null("Unknown").alias(col_sct_first))
+            df_sct.with_columns(pl.col(col_sct_first).fill_null("Unknown").alias(col_sct_first))
             .group_by(col_sct_first)
             .agg(pl.len().alias("N"))
         )
         t_sct_first = _order_categories(t_sct_first, col_sct_first)
         md_lines.append("## Counts by payer at first stem cell transplant")
+        md_lines.append("")
+        md_lines.append(f"*Among patients who had stem cell transplant only (N = {flag_small_cell(df_sct.height)}).*")
         md_lines.append("")
         md_lines.append("| Payer category | N |")
         md_lines.append("|----------------|---|")
@@ -389,25 +452,27 @@ def main(config_path: Path | None = None) -> None:
             pl.col("N").map_batches(lambda s: pl.Series([_suppress(int(v)) for v in s], dtype=pl.String))
         )
         t_sct_first_csv.write_csv(reports_dir / "payer_at_first_sct.csv")
-        print(f"  payer_at_first_sct.csv")
+        print(f"  payer_at_first_sct.csv (N={df_sct.height})")
     else:
         md_lines.append("## Counts by payer at first stem cell transplant")
         md_lines.append("")
-        md_lines.append("(Column not present.)")
+        md_lines.append("(Column not present or no patients had stem cell transplant.)")
         md_lines.append("")
 
     # -------------------------------------------------------------------------
-    # Table: Counts by payer at last SCT
+    # Table: Counts by payer at last SCT (SCT cohort only)
     # -------------------------------------------------------------------------
     col_sct_last = "PAYER_CATEGORY_AT_LAST_SCT"
-    if col_sct_last in df.columns:
+    if col_sct_last in df.columns and not df_sct.is_empty():
         t_sct_last = (
-            df.with_columns(pl.col(col_sct_last).fill_null("Unknown").alias(col_sct_last))
+            df_sct.with_columns(pl.col(col_sct_last).fill_null("Unknown").alias(col_sct_last))
             .group_by(col_sct_last)
             .agg(pl.len().alias("N"))
         )
         t_sct_last = _order_categories(t_sct_last, col_sct_last)
         md_lines.append("## Counts by payer at last stem cell transplant")
+        md_lines.append("")
+        md_lines.append(f"*Among patients who had stem cell transplant only (N = {flag_small_cell(df_sct.height)}).*")
         md_lines.append("")
         md_lines.append("| Payer category | N |")
         md_lines.append("|----------------|---|")
@@ -419,11 +484,11 @@ def main(config_path: Path | None = None) -> None:
             pl.col("N").map_batches(lambda s: pl.Series([_suppress(int(v)) for v in s], dtype=pl.String))
         )
         t_sct_last_csv.write_csv(reports_dir / "payer_at_last_sct.csv")
-        print(f"  payer_at_last_sct.csv")
+        print(f"  payer_at_last_sct.csv (N={df_sct.height})")
     else:
         md_lines.append("## Counts by payer at last stem cell transplant")
         md_lines.append("")
-        md_lines.append("(Column not present.)")
+        md_lines.append("(Column not present or no patients had stem cell transplant.)")
         md_lines.append("")
 
     # -------------------------------------------------------------------------

@@ -50,7 +50,18 @@ from src.validate.structural import (
 
 
 def _build_table_map(table_filenames: list[str], parquet_dir: Path) -> dict[str, Path]:
-    """Build mapping from table_name -> parquet_path."""
+    """Build mapping from CDM table name to parquet file path.
+
+    Resolves table names using schema.py naming rules (e.g., "DEMOGRAPHIC_Mailhot_V1" → "DEMOGRAPHIC").
+    Used to locate validated parquet files for deduplication and harmonization.
+
+    Args:
+        table_filenames: List of CSV filenames from datastructure.txt
+        parquet_dir: Directory containing validated parquet files (Phase 4 output)
+
+    Returns:
+        Dict mapping table name to parquet path (e.g., {"DEMOGRAPHIC": Path("parquet/DEMOGRAPHIC_Mailhot_V1.parquet")})
+    """
     table_map: dict[str, Path] = {}
     for filename in table_filenames:
         stem = Path(filename).stem
@@ -61,7 +72,17 @@ def _build_table_map(table_filenames: list[str], parquet_dir: Path) -> dict[str,
 
 
 def _suppress(value: int) -> str:
-    """Small-cell suppression: replace counts 1-10 with dash."""
+    """Replace small-cell counts (1-10) with dash for CSV output per HIPAA de-identification.
+
+    Used in CSV reports where values must be truly suppressed (not just flagged). Markdown
+    reports use flag_small_cell() which adds ⚠ warning but keeps value visible.
+
+    Args:
+        value: Count to potentially suppress
+
+    Returns:
+        "-" if 1 <= value <= 10, otherwise string representation of value
+    """
     if 1 <= value <= SMALL_CELL_THRESHOLD:
         return "-"
     return str(value)
@@ -77,7 +98,29 @@ def _generate_dedup_report(
     reports_dir: Path,
     paths,
 ) -> Path:
-    """Generate reports/dedup_report.md with duplicate detection findings."""
+    """Generate reports/dedup_report.md with duplicate detection findings per table and partner.
+
+    Creates markdown report with three sections: (1) Overview table showing total rows, duplicate
+    counts, and dedup rates per CDM table; (2) Per-partner duplicate rates showing SOURCE-stratified
+    duplicate counts; (3) Methodology explaining composite key deduplication logic and flagging behavior.
+
+    Small-cell suppression applied via flag_small_cell for counts 1-10 per REQ-05.
+
+    Deduplication uses table-specific composite keys defined in DEDUP_KEYS (e.g., DIAGNOSIS:
+    ID+DX_DATE+DX). ALL occurrences sharing a composite key are flagged (IS_DUPLICATE=1), not
+    just subsequent rows. Null key values don't match each other (null != null), so rows with
+    null keys are never flagged as duplicates.
+
+    Writes markdown file to reports/dedup_report.md. Returns path to written file.
+
+    Args:
+        report_data: Dict mapping table_name to stats dict (keys: total_rows, flags, partner_dedup)
+        reports_dir: Output directory for reports
+        paths: Config paths object (for data_root, parquet_dir metadata in report header)
+
+    Returns:
+        Path to written dedup_report.md file
+    """
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     lines: list[str] = []
 
@@ -161,7 +204,31 @@ def _generate_consistency_report(
     reports_dir: Path,
     paths,
 ) -> Path:
-    """Generate reports/consistency_report.md with cross-table findings."""
+    """Generate reports/consistency_report.md with cross-table consistency checks.
+
+    Creates markdown report with four sections: (1) Demographics consistency (multi-BIRTH_DATE,
+    multi-SEX patients); (2) Events outside encounter windows (±1 day tolerance); (3) Death date
+    consistency (DEATH vs TUMOR_REGISTRY date mismatches); (4) Insurance enrollment coverage
+    (encounters outside enrollment periods, patients with no enrollment).
+
+    Small-cell suppression applied via flag_small_cell for counts 1-10 per REQ-05. Lists patient
+    IDs only when count <= 10 (to aid debugging without exposing large PHI lists).
+
+    Cross-table checks use reference tables (DEMOGRAPHIC, ENCOUNTER, ENROLLMENT, DEATH) loaded
+    in main() to validate consistency flags added to event tables during Phase 5 cleaning.
+
+    Writes markdown file to reports/consistency_report.md. Returns path to written file.
+
+    Args:
+        report_data: Dict mapping table_name to stats dict (keys: total_rows, flags with _con_* counts)
+        demo_consistency: Dict with keys: total_patients, multi_birth_date (list), multi_sex (list)
+        death_consistency: Dict with keys: patients_checked, patients_mismatched, details (list)
+        reports_dir: Output directory for reports
+        paths: Config paths object (for data_root, parquet_dir metadata in report header)
+
+    Returns:
+        Path to written consistency_report.md file
+    """
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     lines: list[str] = []
 
@@ -283,7 +350,29 @@ def _generate_partner_report(
     reports_dir: Path,
     paths,
 ) -> Path:
-    """Generate reports/partner_harmonization.md with partner flag findings."""
+    """Generate reports/partner_harmonization.md with partner-specific provenance flag summaries.
+
+    Creates markdown report with four sections: (1) Partner flag summary showing ICD_MAPPED,
+    CLAIMS_ONLY, DEATH_ONLY totals across all tables; (2) ICD_MAPPED partners (AMS, UMI) who
+    retrospectively mapped ICD-9 → ICD-10, explaining pre-October-2015 ICD-10 codes; (3) CLAIMS_ONLY
+    partner (FLM) with tables present/absent; (4) DEATH_ONLY partner (VRT) contributing death records.
+
+    Small-cell suppression applied via flag_small_cell for counts 1-10 per REQ-05.
+
+    Partner flags are added by src/clean/harmonize.py based on SOURCE column values. These flags
+    enable subsetting analyses by data provenance and account for partner-specific data quirks
+    (e.g., AMS/UMI ICD mapping, FLM claims-only, VRT death-only).
+
+    Writes markdown file to reports/partner_harmonization.md. Returns path to written file.
+
+    Args:
+        report_data: Dict mapping table_name to stats dict (keys: total_rows, flags with partner flag counts)
+        reports_dir: Output directory for reports
+        paths: Config paths object (for data_root, parquet_dir metadata in report header)
+
+    Returns:
+        Path to written partner_harmonization.md file
+    """
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     lines: list[str] = []
 
@@ -381,6 +470,33 @@ def _generate_partner_report(
 
 
 def main(config_path: Path | None = None) -> None:
+    """Phase 5: Deduplication, cross-table consistency checks, and partner harmonization for all CDM tables.
+
+    Entry point for cleaning pipeline. Processes all tables in table-by-table loop: drops existing
+    clean flags, flags exact duplicates via composite keys (see DEDUP_KEYS in dedup.py), adds partner
+    provenance flags (ICD_MAPPED, CLAIMS_ONLY, DEATH_ONLY), flags events outside encounter windows
+    (±1 day tolerance), flags encounters outside enrollment periods, adds diagnosis/provider flags,
+    writes flagged Parquet back to parquet_dir in-place.
+
+    Also runs cross-table summary checks (demographic consistency, death date consistency) and
+    generates three markdown reports: dedup_report.md, consistency_report.md, partner_harmonization.md.
+
+    Small-cell suppression applied via flag_small_cell/_suppress per REQ-05 for all report counts.
+
+    Designed for HPC interactive sessions (srun --pty bash). Typical run time: 5-10 minutes
+    depending on table count and row counts. Sequential table processing (see CONCERNS.md for
+    parallelization discussion).
+
+    Creates reports/ directory if it doesn't exist. Prints progress for each table (flags added,
+    rows flagged) and cross-table checks to stdout. Final summary shows total tables processed,
+    total flag columns added, total rows flagged, elapsed time, and report paths.
+
+    Args:
+        config_path: Optional path to config/paths.toml (uses default if None)
+
+    Raises:
+        SystemExit: If critical error occurs (missing config, parquet read/write failures, etc.)
+    """
     print("=" * 60)
     print("HL DATA LOADING & CLEANING — DEDUPLICATION & HARMONIZATION")
     print("=" * 60)
