@@ -1,10 +1,20 @@
-# HL data loading & cleaning — deduplication & cross-table consistency module
-"""Exact-match duplicate flagging with composite keys, cross-table
-demographic and temporal consistency checks, and Parquet write-back helper.
+"""Phase 5: Cleaning — deduplication and cross-table consistency checks.
 
-Adds binary flag columns (0/1, Int8) to DataFrames.  Dedup uses the
-``IS_DUPLICATE`` column; cross-table consistency flags use the ``_con_``
-infix naming convention.
+Flags exact-match duplicates using composite keys and validates consistency across
+related tables (demographics, temporal windows, death dates). All flags are binary
+Int8 columns (0/1) added to DataFrames.
+
+**Pipeline position:** Phase 5 (Cleaning)
+**Input:** Raw Parquet tables from Phase 4 (Loading)
+**Output:** DataFrames with IS_DUPLICATE and _con_* flag columns
+**Orchestrated by:** scripts/clean_all.py
+
+**Key functions:**
+- flag_duplicates: Composite-key duplicate detection
+- check_demographic_consistency: Multi-birth-date and multi-sex detection
+- flag_events_outside_encounters: Temporal window validation
+- check_death_consistency: Cross-table death date comparison
+- write_cleaned: Parquet write with flag statistics
 """
 
 from pathlib import Path
@@ -17,6 +27,22 @@ from src.validate.structural import PATID_COL, TUMOR_REGISTRY_TABLES
 # Constants — composite dedup keys per table
 # ---------------------------------------------------------------------------
 
+# Composite keys for duplicate detection: columns that together uniquely identify a record.
+# Rationale: Clinical events are identified by patient + date + clinical code/type. Using
+# composite keys (rather than single IDs) detects true semantic duplicates where the same
+# event appears multiple times.
+#
+# Key selection logic:
+# - DIAGNOSIS: Patient + date + code (DX_DATE + DX) — same diagnosis on same date is duplicate
+# - PROCEDURES: Patient + date + code (PX_DATE + PX) — same procedure on same date is duplicate
+# - LAB_RESULT_CM: Patient + date + test (SPECIMEN_DATE + LAB_LOINC) — same lab on same date
+# - ENCOUNTER: Patient + date + type + facility (ADMIT_DATE + ENC_TYPE + FACILITYID) — encounter uniqueness
+# - VITAL: Patient + date only (MEASURE_DATE) — multiple vitals same day considered duplicates
+# - PRESCRIBING: Patient + date + drug (RX_ORDER_DATE + RXNORM_CUI) — same prescription on same date
+#
+# TODO(audit): VITAL uses only MEASURE_DATE without vital type (HT/WT/BP/etc) — may flag
+# legitimate multiple measurements on same day as duplicates. Consider adding VITAL_SOURCE or
+# measurement type if available.
 DEDUP_KEYS: dict[str, list[str]] = {
     "DIAGNOSIS": ["ID", "DX_DATE", "DX"],
     "PROCEDURES": ["ID", "PX_DATE", "PX"],
@@ -66,7 +92,21 @@ CLEAN_FLAG_PREFIX: str = "_con_"
 
 
 def drop_existing_clean_flags(df: pl.DataFrame) -> pl.DataFrame:
-    """Remove columns in CLEAN_FLAG_COLS or starting with CLEAN_FLAG_PREFIX."""
+    """Remove Phase 5 flag columns from DataFrame for idempotent re-runs.
+
+    Scans column names and drops any matching CLEAN_FLAG_COLS (IS_DUPLICATE, ICD_MAPPED,
+    FLAG_HL_DX, etc.) or starting with CLEAN_FLAG_PREFIX ("_con_"). This allows cleaning
+    scripts to be re-run without accumulating duplicate flag columns.
+
+    Clinical rationale: Pipeline re-runs require clean state — old flags must be removed
+    before reapplying logic to ensure correctness.
+
+    Args:
+        df: Input DataFrame potentially containing old flag columns.
+
+    Returns:
+        DataFrame with all Phase 5 flag columns removed.
+    """
     to_drop = [c for c in df.columns if c in CLEAN_FLAG_COLS or c.startswith(CLEAN_FLAG_PREFIX)]
     if to_drop:
         df = df.drop(to_drop)
@@ -81,10 +121,24 @@ def drop_existing_clean_flags(df: pl.DataFrame) -> pl.DataFrame:
 def flag_duplicates(df: pl.DataFrame, table_name: str) -> pl.DataFrame:
     """Mark ALL rows sharing composite key values as IS_DUPLICATE=1.
 
-    Uses ``DataFrame.is_duplicated()`` on a column subset — marks both
-    first and subsequent occurrences.  Null keys do NOT match each other
-    (null != null), so rows with null key columns are not flagged as
-    duplicates of one another.
+    Detects exact-match duplicates using table-specific composite keys from DEDUP_KEYS.
+    Marks ALL occurrences (both first and subsequent rows) as IS_DUPLICATE=1. Uses Polars
+    is_duplicated() on key column subset.
+
+    **Null behavior:** Rows with null key columns are NOT flagged as duplicates of each
+    other (Polars treats null != null). This is correct behavior — null date/code values
+    represent unknowns, not semantic matches.
+
+    Clinical rationale: Duplicate clinical events (same patient, date, code) indicate
+    data quality issues or multi-system redundancy that must be identified before analysis.
+
+    Args:
+        df: Input DataFrame for a PCORnet table.
+        table_name: PCORnet table name (e.g., "DIAGNOSIS", "PROCEDURES").
+
+    Returns:
+        DataFrame with IS_DUPLICATE column added (Int8: 1 if duplicate, 0 otherwise).
+        Returns df unchanged if table_name not in DEDUP_KEYS or < 2 keys available.
     """
     keys = DEDUP_KEYS.get(table_name)
     if not keys:
@@ -103,11 +157,24 @@ def flag_duplicates(df: pl.DataFrame, table_name: str) -> pl.DataFrame:
 
 
 def check_demographic_consistency(table_map: dict[str, Path]) -> dict:
-    """Check for patients with multiple BIRTH_DATE or SEX values.
+    """Check for patients with multiple BIRTH_DATE or SEX values across DEMOGRAPHIC rows.
 
-    Returns dict with ``multi_birth_date``, ``multi_sex``, and
-    ``total_patients`` keys.  Returns empty dict if DEMOGRAPHIC table
-    is unavailable.
+    Scans DEMOGRAPHIC table and identifies patients with inconsistent demographics. In
+    well-formed data, each patient should have a single birth date and sex value. Multiple
+    values indicate data quality issues (system integration problems, data entry errors).
+
+    Clinical rationale: Demographics are foundational attributes — inconsistency undermines
+    all downstream analysis (age calculations, sex-specific cohorts).
+
+    Args:
+        table_map: Dict mapping table names to Parquet file paths.
+
+    Returns:
+        Dict with keys:
+        - "multi_birth_date": List of patient IDs with >1 BIRTH_DATE value
+        - "multi_sex": List of patient IDs with >1 SEX value
+        - "total_patients": Total unique patients in DEMOGRAPHIC
+        Returns empty dict if DEMOGRAPHIC table unavailable or missing.
     """
     if "DEMOGRAPHIC" not in table_map:
         return {}
@@ -144,12 +211,30 @@ def flag_events_outside_encounters(
 ) -> pl.DataFrame:
     """Flag event rows whose date falls outside the linked encounter window.
 
-    Adds ``_con_outside_encounter`` (Int8): 1 when *event_date_col* is
-    outside [ADMIT_DATE − 1 day, DISCHARGE_DATE + 1 day].
+    Clinical events (diagnoses, procedures, labs) should occur within their linked
+    encounter's temporal window. Events outside the window indicate data quality issues
+    (incorrect ENCOUNTERID linkage, date entry errors, or encounter record gaps).
 
-    Null handling: if ENCOUNTERID, ADMIT_DATE, or *event_date_col* is
-    null the flag is 0 (cannot assess).  If DISCHARGE_DATE is null the
-    window is treated as open-ended (only the lower bound is checked).
+    **Validation window:** [ADMIT_DATE - 1 day, DISCHARGE_DATE + 1 day]. The ±1 day
+    tolerance accommodates timestamp rounding and pre-admission/post-discharge services.
+
+    **Null handling:**
+    - If ENCOUNTERID, ADMIT_DATE, or event_date_col is null: flag = 0 (cannot assess)
+    - If DISCHARGE_DATE is null: window is open-ended (only lower bound checked)
+
+    Clinical rationale: Temporal consistency between events and encounters is essential
+    for accurate clinical timelines and encounter-level aggregation.
+
+    Uses lazy evaluation to manage memory during the many-to-many join.
+
+    Args:
+        event_df: Event DataFrame (DIAGNOSIS, PROCEDURES, etc.) with ENCOUNTERID.
+        encounter_df: ENCOUNTER DataFrame with ADMIT_DATE, DISCHARGE_DATE.
+        event_date_col: Name of date column in event_df (e.g., "DX_DATE", "PX_DATE").
+
+    Returns:
+        event_df with _con_outside_encounter column added (Int8: 1 if outside, 0 otherwise).
+        Returns event_df unchanged if ENCOUNTERID column absent.
     """
     if "ENCOUNTERID" not in event_df.columns:
         return event_df
@@ -190,11 +275,26 @@ def flag_events_outside_encounters(
 def check_death_consistency(table_map: dict[str, Path]) -> dict:
     """Compare DEATH_DATE between DEATH table and TUMOR_REGISTRY tables.
 
-    TUMOR_REGISTRY date columns may be strings — parsed using a
-    multi-format fallback chain (MM/DD/YYYY, DATE9, YYYYMMDD).
+    Death dates should be consistent across tables. Mismatches indicate data quality issues
+    (source system discrepancies, date format errors, incomplete updates). TUMOR_REGISTRY
+    tables may contain DATE_OF_DEATH, DATE_OF_LAST_CONTACT, or DEATH_DATE columns.
 
-    Returns dict with ``patients_checked``, ``patients_mismatched``,
-    ``details``.  Returns empty dict if DEATH table is unavailable.
+    **Date parsing:** TUMOR_REGISTRY date columns may be strings in multiple formats.
+    Applies fallback chain: MM/DD/YYYY → DD-Mon-YYYY (DATE9) → YYYYMMDD. This handles
+    mixed-format columns common in cancer registry data.
+
+    Clinical rationale: Death date accuracy is critical for survival analysis and ensures
+    post-death events are properly identified.
+
+    Args:
+        table_map: Dict mapping table names to Parquet file paths.
+
+    Returns:
+        Dict with keys:
+        - "patients_checked": Total patients with death dates compared
+        - "patients_mismatched": Patients with inconsistent death dates
+        - "details": List of per-table comparison results (dict per TUMOR_REGISTRY table)
+        Returns empty dict if DEATH table unavailable.
     """
     if "DEATH" not in table_map or not table_map["DEATH"].exists():
         return {}
@@ -282,10 +382,25 @@ def check_death_consistency(table_map: dict[str, Path]) -> dict:
 
 
 def write_cleaned(df: pl.DataFrame, parquet_path: Path) -> dict:
-    """Write *df* to Parquet (snappy) and return Phase 5 flag statistics.
+    """Write DataFrame to Parquet with snappy compression and return flag statistics.
 
-    Counts columns matching CLEAN_FLAG_COLS or the CLEAN_FLAG_PREFIX and
-    sums flagged rows for each.
+    Writes cleaned DataFrame to disk and calculates summary statistics for all Phase 5
+    flag columns (IS_DUPLICATE, _con_*, FLAG_*, ICD_MAPPED, etc.). Statistics support
+    data quality reporting and validation.
+
+    Clinical rationale: Flag statistics document data quality issues discovered during
+    cleaning and provide audit trail for downstream analysis decisions.
+
+    Args:
+        df: Cleaned DataFrame with flag columns added.
+        parquet_path: Output path for Parquet file.
+
+    Returns:
+        Dict with keys:
+        - "path": Output file path (string)
+        - "total_rows": Total rows in DataFrame
+        - "flag_columns_added": Count of flag columns
+        - "flags": Dict mapping flag column name to count of flagged rows (1s)
     """
     flag_cols = [c for c in df.columns if c in CLEAN_FLAG_COLS or c.startswith(CLEAN_FLAG_PREFIX)]
 
