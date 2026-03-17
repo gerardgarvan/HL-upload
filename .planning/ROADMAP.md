@@ -46,10 +46,12 @@ Plans:
   2. Schema validation checks expected columns and dtypes after each phase writes output, catching schema drift or type degradation
   3. Configuration validation runs on pipeline startup and fails fast with actionable errors for missing files, bad paths, or invalid settings
   4. Small-cell suppression uses a single `_suppress()` function with a single threshold constant, and all report outputs have been audited for HIPAA compliance
-**Plans**: TBD
+**Plans:** 3 plans
 
 Plans:
-- [ ] TBD during planning
+- [ ] 02-01-PLAN.md — Checkpoint module (row-count + schema validation) and config validation with startup summary (VAL-01, VAL-02, VAL-03)
+- [ ] 02-02-PLAN.md — Centralized suppression module and rewire all report imports (VAL-04)
+- [ ] 02-03-PLAN.md — Wire checkpoints into all 5 pipeline scripts (VAL-01, VAL-02, VAL-03)
 
 ### Phase 3: Test Coverage for Fragile Areas
 **Goal**: Correctness of complex, fragile logic is locked in with comprehensive test coverage
@@ -85,6 +87,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Documentation & Baseline | 0/5 | Complete    | 2026-03-17 |
-| 2. Validation & Suppression Hardening | 0/TBD | Not started | - |
+| 2. Validation & Suppression Hardening | 0/3 | Planned | - |
 | 3. Test Coverage for Fragile Areas | 0/TBD | Not started | - |
 | 4. Reproducibility & Onboarding | 0/TBD | Not started | - |
