@@ -13,6 +13,15 @@ htmlcov/
 !valuesets.csv
 !datastructure.txt
 
+# Pipeline outputs (contain PHI - never commit)
+parquet_clean/
+derived/
+reports/*.csv
+reports/figures/*.png
+
+# Golden manifest is safe to commit (metadata only, no PHI)
+!.golden/manifest.json
+
 # Environment
 .env
 .env.*
