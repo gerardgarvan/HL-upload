@@ -1,6 +1,6 @@
 """Unit tests for flag_small_cell (small-cell suppression for markdown)."""
 
-from src.validate.structural import flag_small_cell
+from src.report.suppression import flag_small_cell
 
 
 def test_flag_small_cell_zero():

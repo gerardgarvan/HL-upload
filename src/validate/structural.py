@@ -603,6 +603,7 @@ def completeness_heatmap_symbol(pct: float) -> str:
 # ---------------------------------------------------------------------------
 # 9. Small cell flagging
 # ---------------------------------------------------------------------------
+# DEPRECATED: Use src.report.suppression instead. Will be removed in Phase 3.
 
 
 def flag_small_cell(value: int) -> str:

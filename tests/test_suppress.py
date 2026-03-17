@@ -1,6 +1,6 @@
 """Unit tests for _suppress (small-cell suppression for CSV)."""
 
-from src.report.quality_report import _suppress
+from src.report.suppression import suppress as _suppress
 
 
 def test_suppress_zero():

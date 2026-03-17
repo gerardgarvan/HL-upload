@@ -30,7 +30,7 @@ from src.report.quality_report import (
     build_patient_level_derived,
     generate_cleaning_decisions_content,
 )
-from src.validate.structural import flag_small_cell
+from src.report.suppression import flag_small_cell
 
 # ---------------------------------------------------------------------------
 # Helpers

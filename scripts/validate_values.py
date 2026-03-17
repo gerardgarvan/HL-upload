@@ -29,11 +29,10 @@ from src.validate.cohort import (
     ALL_HL_NORMALIZED,
     detect_dx_format,
 )
+from src.report.suppression import DEFAULT_THRESHOLD as SMALL_CELL_THRESHOLD, flag_small_cell
 from src.validate.structural import (
     PATID_COL,
-    SMALL_CELL_THRESHOLD,
     TUMOR_REGISTRY_TABLES,
-    flag_small_cell,
 )
 from src.validate.values import (
     HL_LAB_RANGES,

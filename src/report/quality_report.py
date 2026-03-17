@@ -28,9 +28,9 @@ from src.validate.cohort import (
     ALL_HL_NORMALIZED,
     detect_dx_format,
 )
+from src.report.suppression import DEFAULT_THRESHOLD as SMALL_CELL_THRESHOLD, suppress as _suppress
 from src.validate.structural import (
     PATID_COL,
-    SMALL_CELL_THRESHOLD,
     TUMOR_REGISTRY_TABLES,
     completeness_by_partner,
 )
@@ -560,24 +560,7 @@ def build_patient_level_derived(table_map: dict[str, Path]) -> pl.DataFrame:
 # ---------------------------------------------------------------------------
 
 
-def _suppress(value: int) -> str:
-    """Apply HIPAA small-cell suppression: return '-' for counts 1-10, otherwise str(value).
-
-    Suppresses small cell counts to prevent re-identification of individuals in published reports.
-    SMALL_CELL_THRESHOLD=10 per HIPAA Safe Harbor Method (counts ≤10 suppressed).
-
-    Clinical rationale: HIPAA compliance for publishable reports — small cell counts enable
-    individual identification. Dash ("-") indicates suppression in CSV/markdown outputs.
-
-    Args:
-        value: Count to potentially suppress.
-
-    Returns:
-        "-" if value in [1, 10], otherwise str(value).
-    """
-    if 1 <= value <= SMALL_CELL_THRESHOLD:
-        return "-"
-    return str(value)
+# REMOVED: _suppress() now imported from src.report.suppression (centralized HIPAA module)
 
 
 def aggregate_dq_metrics(

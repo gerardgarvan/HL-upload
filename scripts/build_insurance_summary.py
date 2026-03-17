@@ -19,8 +19,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import polars as pl
 
 from src.load.config import load_config
-from src.report.quality_report import _suppress
-from src.validate.structural import SMALL_CELL_THRESHOLD, flag_small_cell
+from src.report.suppression import suppress as _suppress, DEFAULT_THRESHOLD as SMALL_CELL_THRESHOLD, flag_small_cell
 
 PAYER_CATEGORY_ORDER = [
     "Medicare",
