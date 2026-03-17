@@ -2,7 +2,29 @@
 """Date detection, conversion, validation, and inventory functions.
 
 Converts OneFlorida+ PCORnet CDM CSV files to Parquet with properly typed
-date columns.  Uses Polars exclusively (no pandas).
+date columns. Uses Polars exclusively (no pandas). This module handles the
+critical Phase 2 step of converting raw string-typed CSVs to typed Parquet
+files with automatic date format detection across 3 SAS date formats.
+
+**Pipeline Position:** Phase 2 (Loading/Conversion)
+
+**Input:** Raw CSV files from data_root (OneFlorida+ extracts with mixed date formats)
+
+**Output:** Typed Parquet files with converted date columns + file_inventory.csv
+
+**Orchestrated by:** scripts/convert_all.py
+
+**Key functions:**
+- detect_date_columns(): Auto-detect date columns using name heuristics + value sampling
+- convert_date_column(): Convert single column with 10% failure threshold
+- validate_date_range(): Check converted dates against [1900-01-01, 2026-12-31]
+- convert_table(): Orchestrate single-table conversion pipeline
+- write_inventory(): Write conversion metadata to CSV
+
+**Known fragile areas:**
+- Date format detection relies on regex sampling (DATETIME_RE, DATE9_RE, YYYYMMDD_RE)
+- Mixed-format date columns can exceed 10% conversion failure threshold
+- YYYYMMDD format requires name heuristic to avoid false positives on 8-digit codes
 """
 
 import csv
@@ -19,6 +41,10 @@ from src.load.schema import resolve_table_name
 # Constants
 # ---------------------------------------------------------------------------
 
+# Known date column names from PCORnet CDM specification (v6.0).
+# Used as first-pass name heuristic before value sampling.
+# Clinical rationale: PCORnet standardizes these names across all sites,
+# so they're reliable indicators of date columns even when values are sparse.
 KNOWN_DATE_COLS: set[str] = {
     "BIRTH_DATE",
     "ADMIT_DATE",
@@ -49,15 +75,24 @@ KNOWN_DATE_COLS: set[str] = {
     "DATE_OF_DIAGNOSIS",
 }
 
+# Regex to detect date-like column names when not in KNOWN_DATE_COLS
 DATE_NAME_RE = re.compile(r"(_DATE|_DT)$|^DATE_|^DT_|_DATE_", re.IGNORECASE)
 
-DATE9_RE = re.compile(r"^\d{2}[A-Za-z]{3}\d{4}$")  # 01JAN2020
-DATETIME_RE = re.compile(r"^\d{2}[A-Za-z]{3}\d{4}:\d{2}:\d{2}:\d{2}$")  # 01JAN2020:14:30:00
-YYYYMMDD_RE = re.compile(r"^\d{8}$")  # 20200101
+# SAS date format regexes for value sampling
+# OneFlorida+ exports dates in 3 formats depending on source system:
+DATE9_RE = re.compile(r"^\d{2}[A-Za-z]{3}\d{4}$")  # 01JAN2020 (SAS DATE9. format)
+DATETIME_RE = re.compile(r"^\d{2}[A-Za-z]{3}\d{4}:\d{2}:\d{2}:\d{2}$")  # 01JAN2020:14:30:00 (SAS DATETIME format)
+YYYYMMDD_RE = re.compile(r"^\d{8}$")  # 20200101 (8-digit integer as string, tumor registry common)
 
+# Plausibility bounds for converted dates (informational only, doesn't reject values)
+# Lower bound: 1900-01-01 (PCORnet minimum, pre-1900 birth dates masked to this value)
+# Upper bound: 2026-12-31 (conservative future cutoff beyond extract date 2025-09-15)
+# TODO(audit): Are there legitimate 1900-01-01 birth dates or are they all masked values?
 MIN_DATE = date(1900, 1, 1)
 MAX_DATE = date(2026, 12, 31)
 
+# Fieldnames for file_inventory.csv (conversion metadata report)
+# Tracks per-table conversion success/failure and date column conversion outcomes
 INVENTORY_FIELDS = [
     "table_name",
     "csv_file",
@@ -81,15 +116,37 @@ INVENTORY_FIELDS = [
 def detect_date_columns(df: pl.DataFrame, sample_size: int = 200) -> dict[str, str]:
     """Auto-detect date columns using name heuristics and value sampling.
 
-    Two-phase approach:
-      A) Name heuristic — column in KNOWN_DATE_COLS or matches DATE_NAME_RE.
-      B) Value sampling — regex match against DATETIME, DATE9., YYYYMMDD.
+    Two-phase detection approach to handle OneFlorida+'s mixed SAS date formats:
+      A) Name heuristic: column in KNOWN_DATE_COLS or matches DATE_NAME_RE pattern
+      B) Value sampling: regex match first N non-null values against 3 format patterns
 
-    Lower match threshold (30 %) when name also matches; 50 % for value-only.
-    YYYYMMDD accepted only when name heuristic also matches (avoids false
-    positives on 8-digit codes like SITE_CODE or HISTOLOGY).
+    Adaptive thresholds based on name confidence:
+      - 30% match required when name heuristic matches (high confidence)
+      - 50% match required for value-only detection (avoid false positives)
+      - YYYYMMDD format requires name match (prevents false positives on 8-digit IDs)
 
-    Returns ``{column_name: format_string}`` dict.
+    Known fragile area: Mixed-format date columns (e.g., DATE9. + YYYYMMDD in same
+    column) may fail to detect or may choose dominant format incorrectly.
+
+    Clinical rationale: Accurate date detection is critical for temporal analyses
+    (treatment timelines, enrollment periods, survival calculations). False negatives
+    keep dates as strings (safe but inconvenient); false positives corrupt data.
+
+    Args:
+        df: Polars DataFrame with string-typed columns to analyze
+        sample_size: Number of non-null values to sample per column (default 200)
+
+    Returns:
+        dict: Mapping of {column_name: strftime_format_string} for detected date columns
+            Possible formats: "%d%b%Y:%H:%M:%S", "%d%b%Y", "%Y%m%d"
+
+    Side effects:
+        None (read-only analysis of DataFrame)
+
+    Example:
+        >>> df = pl.DataFrame({"DX_DATE": ["01JAN2020", "15FEB2020"], "ID": ["1", "2"]})
+        >>> detect_date_columns(df)
+        {"DX_DATE": "%d%b%Y"}
     """
     detected: dict[str, str] = {}
 
@@ -137,12 +194,40 @@ def detect_date_columns(df: pl.DataFrame, sample_size: int = 200) -> dict[str, s
 
 
 def convert_date_column(df: pl.DataFrame, col: str, fmt: str) -> tuple[pl.DataFrame, dict]:
-    """Convert a single string column to date/datetime with 10 % threshold.
+    """Convert a single string column to date/datetime with 10% failure threshold.
 
-    If >10 % of non-null, non-empty values fail to parse the column is kept
-    as string.  Otherwise the column is replaced in-place (no raw copies).
+    Attempts strict=False parsing which converts parse failures to null. If more
+    than 10% of non-null, non-empty values fail to parse, the column is kept as
+    string (safety over convenience). Otherwise, the column is replaced in-place
+    with the typed date/datetime column.
 
-    Returns ``(df, stats_dict)``.
+    Known fragile area: Mixed-format date columns (e.g., 01JAN2020 + 20200101 in
+    same column) will exceed the 10% threshold and be kept as string. This is
+    intentional conservative behavior.
+
+    Clinical rationale: Incorrect date conversions silently corrupt temporal
+    analyses. The 10% threshold balances format flexibility with data integrity—
+    occasional bad values are acceptable, but systematic parse failures indicate
+    format mismatch.
+
+    Args:
+        df: Polars DataFrame containing the column to convert
+        col: Column name to convert (must be String dtype)
+        fmt: strftime format string (e.g., "%d%b%Y", "%d%b%Y:%H:%M:%S", "%Y%m%d")
+
+    Returns:
+        tuple: (modified_df, stats_dict)
+            - modified_df: DataFrame with column converted (or unchanged if kept as string)
+            - stats_dict: Conversion statistics with keys:
+                * "col": column name
+                * "action": "converted" | "kept_as_string" | "skipped"
+                * "reason": explanation if skipped/kept
+                * "new_nulls": count of parse failures (if converted)
+                * "failures": count of parse failures (if kept as string)
+
+    Side effects:
+        Modifies DataFrame by replacing string column with typed date/datetime column
+        if conversion succeeds. No backup copy is kept (destructive operation).
     """
     series = df[col]
     non_null_non_empty = series.drop_nulls().filter(series.drop_nulls() != "")
@@ -185,7 +270,29 @@ def convert_date_column(df: pl.DataFrame, col: str, fmt: str) -> tuple[pl.DataFr
 def validate_date_range(df: pl.DataFrame, col: str) -> dict:
     """Validate converted date/datetime column against [1900-01-01, 2026-12-31].
 
-    Informational only — flags but preserves all values.
+    Informational validation only—reports out-of-range values but does NOT filter
+    or modify them. Out-of-range dates may be legitimate (e.g., 1900-01-01 is
+    PCORnet's masked value for privacy-protected birth dates) or may indicate
+    conversion errors.
+
+    Clinical rationale: Date plausibility checks catch conversion errors (e.g.,
+    YYYYMMDD interpreted as MMDDYYYY) without silently dropping potentially valid
+    masked or edge-case dates.
+
+    Args:
+        df: Polars DataFrame with converted date column
+        col: Column name to validate (must be Date or Datetime dtype)
+
+    Returns:
+        dict: Validation results with keys:
+            * "col": column name
+            * "min": minimum date value as string
+            * "max": maximum date value as string
+            * "out_of_range": count of values outside [MIN_DATE, MAX_DATE]
+            * "skipped": True if column was wrong dtype (dict contains "reason")
+
+    Side effects:
+        None (read-only analysis)
     """
     dtype = df[col].dtype
 
@@ -215,7 +322,35 @@ def validate_date_range(df: pl.DataFrame, col: str) -> dict:
 
 
 def convert_table(csv_path: Path, parquet_dir: Path) -> dict:
-    """Orchestrate single-table conversion. Returns an inventory record dict."""
+    """Orchestrate single-table CSV-to-Parquet conversion pipeline.
+
+    Complete workflow:
+    1. Read CSV with infer_schema=False (all strings) using utf8-lossy encoding
+    2. Detect date columns using name + value heuristics
+    3. Convert each date column with 10% failure threshold
+    4. Validate converted dates against plausibility range
+    5. Write Parquet with snappy compression
+    6. Roundtrip verification (read back to confirm row count)
+    7. Print detailed conversion report to stdout
+    8. Return inventory record dict for file_inventory.csv
+
+    Clinical rationale: Roundtrip verification ensures no silent row loss during
+    conversion, which would compromise cohort completeness.
+
+    Args:
+        csv_path: Path to source CSV file (e.g., DEMOGRAPHIC_Mailhot_V1.csv)
+        parquet_dir: Output directory for Parquet file
+
+    Returns:
+        dict: Inventory record with keys matching INVENTORY_FIELDS constant
+            Includes table_name, row counts, byte sizes, date conversion summary,
+            elapsed time, and status ("ok" | "empty" | "MISMATCH: ...")
+
+    Side effects:
+        - Writes Parquet file to parquet_dir with same stem as CSV
+        - Prints detailed conversion report to stdout (row count, size, date details)
+        - Prints warnings for kept-as-string columns, out-of-range dates, row mismatches
+    """
     t0 = time.time()
     csv_bytes = csv_path.stat().st_size
 
@@ -319,7 +454,26 @@ def convert_table(csv_path: Path, parquet_dir: Path) -> dict:
 
 
 def write_inventory(records: list[dict], output_path: Path) -> None:
-    """Write file_inventory.csv with per-table conversion metadata."""
+    """Write file_inventory.csv with per-table conversion metadata.
+
+    Creates CSV file with columns matching INVENTORY_FIELDS constant. Used for
+    conversion audit trail and baseline documentation. Records include table names,
+    row/byte counts, date conversion summary, and status flags.
+
+    Clinical rationale: Conversion audit trail enables verification that all
+    expected tables were converted and no data was lost in the process.
+
+    Args:
+        records: List of inventory dicts from convert_table() calls
+        output_path: Path for output CSV file (typically parquet_dir/file_inventory.csv)
+
+    Returns:
+        None
+
+    Side effects:
+        - Writes CSV file to output_path
+        - Prints confirmation message to stdout with file path
+    """
     with open(output_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=INVENTORY_FIELDS)
         writer.writeheader()

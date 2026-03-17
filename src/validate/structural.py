@@ -15,8 +15,12 @@ import polars as pl
 # Constants
 # ---------------------------------------------------------------------------
 
+# PATID column name (PCORnet CDM uses "ID" instead of "PATID")
 PATID_COL = "ID"
 
+# HIPAA small-cell suppression threshold (counts 1-10 must be masked in publications)
+# Clinical rationale: HIPAA Safe Harbor method requires suppressing geographic
+# subdivisions with <10 individuals to prevent re-identification
 SMALL_CELL_THRESHOLD = 10
 
 ENCOUNTER_LINKED_TABLES: list[str] = [
@@ -107,10 +111,24 @@ KNOWN_CDM_TABLES: list[str] = [
 def parse_cover_page(path: Path) -> dict[str, list[str]]:
     """Parse DatasetCoverPage text file to extract expected columns per CDM table.
 
-    Format-adaptive: tries tab-delimited table sections, falls back to pattern
-    matching on known table names. Handles BOM via utf-8-sig encoding.
+    The DatasetCoverPage is a tab-delimited or freeform text file provided by
+    OneFlorida+ listing the expected columns for each CDM table in the extract.
+    This function attempts format-adaptive parsing to handle both structured
+    (tab-delimited) and unstructured formats.
 
-    Returns {table_name: [column_names]}.
+    Clinical rationale: Schema validation against the DatasetCoverPage catches
+    missing required columns (e.g., PATID, date fields) that would cause silent
+    errors in downstream analyses.
+
+    Args:
+        path: Path to DatasetCoverPage file (typically in data_root)
+
+    Returns:
+        dict: {table_name: [column_names]} mapping for all parsed tables
+            Returns empty dict if parsing fails (prints warning)
+
+    Side effects:
+        Prints warning to stdout if file cannot be read or format is unrecognized
     """
     try:
         text = path.read_text(encoding="utf-8-sig")
@@ -179,11 +197,39 @@ def validate_table_schema(
     is_tumor_registry: bool = False,
     expected_col_count: int | None = None,
 ) -> dict:
-    """Compare Parquet schema against expected columns.
+    """Compare Parquet schema against expected columns from DatasetCoverPage.
 
-    For TUMOR_REGISTRY: checks column count (warns if >10 difference) and
-    verifies key cancer staging variables are present.
-    For CDM tables: computes extra/missing columns vs expected.
+    Two validation modes:
+    - CDM tables: Exact column comparison (reports extra/missing columns)
+    - Tumor registry tables: Fuzzy validation (column count ±10, key variables present)
+
+    Tumor registry tables get lenient validation because their schemas vary
+    significantly between cancer registries and include many rare/optional fields.
+
+    Clinical rationale: Missing required columns (PATID, date fields, diagnosis
+    codes) cause silent failures in joins and analyses. Extra columns are typically
+    harmless but may indicate schema drift.
+
+    Args:
+        parquet_path: Path to Parquet file to validate
+        expected_cols: List of expected column names from DatasetCoverPage (case-insensitive)
+        table_name: Table name for reporting
+        is_tumor_registry: True for TUMOR_REGISTRY1/2/3 tables (enables fuzzy mode)
+        expected_col_count: Expected column count for tumor registry tables
+
+    Returns:
+        dict: Validation results with keys:
+            * "table": table name
+            * "actual_col_count": actual column count
+            * "expected_col_count": expected count (may be None)
+            * "matched": count of matched columns
+            * "extra": list of extra columns (CDM mode)
+            * "missing": list of missing columns (CDM mode)
+            * "status": "ok" | "warn"
+            * "details": list of warning/error messages
+
+    Side effects:
+        None (read-only schema inspection via pl.read_parquet_schema)
     """
     schema = pl.read_parquet_schema(parquet_path)
     actual_cols = list(schema.keys())
@@ -247,7 +293,17 @@ def validate_table_schema(
 
 
 def check_patid_uniqueness(demographic_path: Path) -> dict:
-    """Verify ID is unique in DEMOGRAPHIC using lazy evaluation."""
+    """Verify ID column is unique in DEMOGRAPHIC table using lazy evaluation.
+
+    Clinical rationale: PATID must be unique in DEMOGRAPHIC (one row per patient).
+    Duplicate PATIDs indicate data extraction errors or missing deduplication.
+
+    Args:
+        demographic_path: Path to DEMOGRAPHIC Parquet file
+
+    Returns:
+        dict: {"total_rows": int, "unique_ids": int, "duplicate_ids": int, "is_unique": bool}
+    """
     lf = pl.scan_parquet(demographic_path)
     total = lf.select(pl.len()).collect().item()
     unique = lf.select(pl.col(PATID_COL).n_unique()).collect().item()
@@ -271,9 +327,22 @@ def check_patid_integrity(
     demographic_path: Path,
     child_table: str,
 ) -> dict:
-    """Anti-join to find orphan patient IDs in child table.
+    """Find orphan patient IDs in child table via anti-join against DEMOGRAPHIC.
 
-    Casts ID to String on both sides to prevent type mismatch errors.
+    Clinical rationale: All patient IDs in encounter/diagnosis/procedure tables
+    must exist in DEMOGRAPHIC. Orphan IDs indicate extraction errors or incomplete
+    patient records that will cause join failures in downstream analyses.
+
+    Args:
+        child_path: Path to child table Parquet file (DIAGNOSIS, ENCOUNTER, etc.)
+        demographic_path: Path to DEMOGRAPHIC Parquet file (master patient list)
+        child_table: Table name for reporting
+
+    Returns:
+        dict: {"table": str, "unique_ids": int, "orphan_ids": int, "orphan_pct": float}
+
+    Side effects:
+        Casts ID columns to String on both sides to prevent type mismatch errors
     """
     demo_ids = pl.scan_parquet(demographic_path).select(pl.col(PATID_COL).cast(pl.String)).unique()
     child_ids = pl.scan_parquet(child_path).select(pl.col(PATID_COL).cast(pl.String)).unique()
@@ -301,11 +370,26 @@ def check_encounterid_integrity(
     skip_partner: str | None = None,
     partner_col: str = "SOURCE",
 ) -> dict:
-    """Anti-join for orphan ENCOUNTERIDs in child table.
+    """Find orphan encounter IDs in child table via anti-join against ENCOUNTER.
 
-    Filters out skip_partner records (e.g. CHP for LAB_RESULT_CM) before
-    checking. Skips tables without ENCOUNTERID column. Filters null
-    ENCOUNTERIDs before anti-join.
+    Clinical rationale: Encounter-linked tables (DIAGNOSIS, PROCEDURES, VITAL, LAB)
+    should reference valid ENCOUNTERIDs. Orphan encounters indicate extraction errors
+    or incomplete encounter records. Some partners (e.g., CHP for labs) legitimately
+    lack encounter linkage and are skipped via skip_partner parameter.
+
+    Args:
+        child_path: Path to child table Parquet file
+        encounter_path: Path to ENCOUNTER Parquet file
+        child_table: Table name for reporting
+        skip_partner: Optional partner code to exclude from check (e.g., "CHP")
+        partner_col: Column name for partner/source (default "SOURCE")
+
+    Returns:
+        dict: {"table": str, "unique_encounterids": int, "orphan_encounterids": int,
+               "orphan_pct": float, "skip_partner": str|None, "skipped": bool}
+
+    Side effects:
+        Filters out skip_partner records before anti-join (if specified)
     """
     child_schema = pl.read_parquet_schema(child_path)
     if "ENCOUNTERID" not in child_schema:
@@ -353,9 +437,21 @@ def completeness_by_partner(
 ) -> pl.DataFrame:
     """Compute per-column completeness (1 - null_count/len) grouped by partner.
 
-    Falls back to SITE column if SOURCE not found. If neither exists, computes
-    overall completeness without partner stratification. Returns long-form
-    DataFrame: [partner_col, row_count, column, completeness, table].
+    Clinical rationale: Data completeness varies by partner site (different EHR
+    systems, data extraction practices). Per-partner completeness profiling enables
+    partner-specific quality assessment and identifies systematic missingness patterns.
+
+    Args:
+        parquet_path: Path to Parquet file to analyze
+        table_name: Table name for output column
+        partner_col: Partner/source column name (default "SOURCE", fallback to "SITE")
+
+    Returns:
+        pl.DataFrame: Long-form completeness data with columns
+            [partner_col, row_count, column, completeness, table]
+
+    Side effects:
+        None (read-only analysis using lazy evaluation)
     """
     lf = pl.scan_parquet(parquet_path)
     schema_names = lf.collect_schema().names()
@@ -410,9 +506,22 @@ def classify_missing_values(
 ) -> pl.DataFrame:
     """Count PCORnet missing value codes per string column.
 
-    Counts NI (no information), UN (unknown), OT (other), empty string, and
-    null for each string column. Returns DataFrame with columns:
-    [table, column, ni_count, un_count, ot_count, empty_count, null_count, total_rows].
+    PCORnet defines standard missing-value codes: NI (no information), UN (unknown),
+    OT (other). These are distinct from SQL NULL and empty string. Classifying them
+    separately enables distinguishing "not collected" from "collected but unknown".
+
+    Clinical rationale: Distinguishing NI/UN/OT from NULL helps assess data quality—
+    systematic NI values may indicate collection issues, while UN values reflect
+    legitimate clinical uncertainty.
+
+    Args:
+        parquet_path: Path to Parquet file to analyze
+        table_name: Table name for output column
+        partner_col: Partner/source column name (unused in this function but kept for API consistency)
+
+    Returns:
+        pl.DataFrame: Per-column missing-value counts with columns
+            [table, column, ni_count, un_count, ot_count, empty_count, null_count, total_rows]
     """
     lf = pl.scan_parquet(parquet_path)
     schema = lf.collect_schema()
@@ -466,9 +575,16 @@ def classify_missing_values(
 
 
 def completeness_heatmap_symbol(pct: float) -> str:
-    """Map completeness percentage (0.0-1.0) to Unicode block character.
+    """Map completeness percentage (0.0-1.0) to Unicode block character for visual heatmaps.
 
-    ≥0.95→█, ≥0.75→▓, ≥0.50→▒, ≥0.25→░, >0→·, 0→○
+    Thresholds: ≥0.95→█ (excellent), ≥0.75→▓ (good), ≥0.50→▒ (moderate),
+    ≥0.25→░ (poor), >0→· (sparse), 0→○ (empty)
+
+    Args:
+        pct: Completeness percentage as float (0.0-1.0)
+
+    Returns:
+        str: Single Unicode block character representing completeness tier
     """
     if pct >= 0.95:
         return "█"
@@ -490,9 +606,19 @@ def completeness_heatmap_symbol(pct: float) -> str:
 
 
 def flag_small_cell(value: int) -> str:
-    """Flag counts that would need suppression if published.
+    """Flag counts that would need suppression if published under HIPAA Safe Harbor.
 
-    Shows actual count with warning marker for 1 ≤ value ≤ SMALL_CELL_THRESHOLD.
+    Shows actual count with warning marker (⚠) for 1 ≤ value ≤ 10 (SMALL_CELL_THRESHOLD).
+    Used in quality reports to identify counts that must be masked before publication.
+
+    Clinical rationale: HIPAA Safe Harbor method requires suppressing counts 1-10
+    to prevent re-identification of individuals in small geographic subdivisions.
+
+    Args:
+        value: Integer count to evaluate
+
+    Returns:
+        str: Value with "⚠" marker if in small-cell range, otherwise string of value
     """
     if 1 <= value <= SMALL_CELL_THRESHOLD:
         return f"{value} ⚠"

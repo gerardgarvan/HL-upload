@@ -15,6 +15,15 @@ import polars as pl
 # Constants — vital sign plausibility ranges
 # ---------------------------------------------------------------------------
 
+# Wide biological plausibility bounds for vital signs (not strict clinical normal ranges)
+# Clinical rationale: These bounds catch data entry errors (e.g., HT in mm vs cm) while
+# permitting extreme but physiologically possible values (e.g., 500 lb weight, BMI 100)
+# HT: 50-272 cm (~1.6-9 ft, allows pediatric and extreme heights)
+# WT: 1-500 kg (~2-1100 lbs, allows neonatal and morbidly obese)
+# SYSTOLIC: 40-300 mmHg (allows hypotensive and severe hypertensive crisis)
+# DIASTOLIC: 20-200 mmHg (allows extreme hypotension and hypertension)
+# ORIGINAL_BMI: 8-100 (allows severe underweight and morbid obesity)
+# TODO(audit): Are these ranges too permissive? Check for unit conversion errors (HT in mm, WT in lbs vs kg)
 VITAL_RANGES: dict[str, tuple[float, float]] = {
     "HT": (50.0, 272.0),
     "WT": (1.0, 500.0),
@@ -27,6 +36,12 @@ VITAL_RANGES: dict[str, tuple[float, float]] = {
 # Constants — HL-relevant lab plausibility ranges (wide biological)
 # ---------------------------------------------------------------------------
 
+# HL-relevant lab test plausibility bounds (LOINC code → {name, min, max, unit})
+# These are WIDE biological ranges (not clinical normal), chosen to catch data entry
+# errors (unit mismatches, decimal point errors) while permitting extreme disease states
+# Clinical rationale: HL patients may have severe cytopenias, liver dysfunction, or
+# inflammatory markers; overly strict ranges would falsely flag legitimate disease states
+# TODO(audit): Validate these ranges against actual distribution in HL cohort. Are maxes too permissive?
 HL_LAB_RANGES: dict[str, dict] = {
     "6690-2": {"name": "WBC", "min": 0, "max": 500, "unit": "10*3/uL"},
     "26464-8": {"name": "WBC alt", "min": 0, "max": 500, "unit": "10*3/uL"},
@@ -54,22 +69,32 @@ HL_LAB_RANGES: dict[str, dict] = {
 # Constants — temporal / ICD / PCORnet
 # ---------------------------------------------------------------------------
 
+# Future date cutoff (beyond extract date 2025-09-15)
 FUTURE_DATE_CUTOFF = date(2025, 12, 31)
 
+# PCORnet masked birth date sentinel value (privacy-protected DOBs)
 MASKED_BIRTH_DATE = date(1900, 1, 1)
 
+# ICD-10 transition dates (US official transition October 1, 2015)
+# Grace period: July 1, 2015 - January 1, 2016 (dual-coding period)
 ICD10_TRANSITION = date(2015, 10, 1)
 GRACE_START = date(2015, 7, 1)
 GRACE_END = date(2016, 1, 1)
 
+# PCORnet missing-value codes (always valid regardless of value set)
 ALWAYS_VALID_CODES: set[str] = {"NI", "UN", "OT"}
 
 # ---------------------------------------------------------------------------
 # Constants — tumor registry / HL-specific
 # ---------------------------------------------------------------------------
 
+# WHO ICD-O-3 histology codes for Hodgkin lymphoma (9650-9667)
+# Clinical rationale: These are the official cancer registry codes for HL subtypes
+# (classical HL, nodular lymphocyte-predominant HL, and variants)
 HL_HISTOLOGY_CODES: set[int] = set(range(9650, 9668))
 
+# Valid AJCC stage group values for HL (stages I-IV with A/B substages)
+# "UNK" = unknown, "88" = not applicable, "99" = unknown/missing (legacy codes)
 VALID_AJCC_STAGES: set[str] = {
     "I",
     "IA",
@@ -88,6 +113,7 @@ VALID_AJCC_STAGES: set[str] = {
     "99",
 }
 
+# Valid B-symptom codes (A = absent, B = present, 1/2 = legacy codes, 8/9 = unknown/missing)
 _B_SYMPTOM_VALID: set[str] = {"A", "B", "1", "2", "9", "8", ""}
 
 
@@ -97,7 +123,18 @@ _B_SYMPTOM_VALID: set[str] = {"A", "B", "1", "2", "9", "8", ""}
 
 
 def _ensure_float(df: pl.DataFrame, col: str) -> pl.DataFrame:
-    """Cast *col* to Float64 if it is stored as String (Pitfall 1)."""
+    """Cast column to Float64 if stored as String to enable numeric comparisons.
+
+    Clinical rationale: Some OneFlorida+ partners export numeric fields (vitals, labs)
+    as strings, causing range checks to fail. This helper prevents silent validation failures.
+
+    Args:
+        df: DataFrame to modify
+        col: Column name to ensure is Float64
+
+    Returns:
+        DataFrame with column cast to Float64 (if originally String/Utf8)
+    """
     if col in df.columns and df.schema[col] in (pl.String, pl.Utf8):
         df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False))
     return df

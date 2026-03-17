@@ -16,27 +16,48 @@ import polars as pl
 
 PATID_COL = "ID"
 
+# HL-specific ICD-10 codes: C81.xx (Hodgkin lymphoma)
+# 77 codes covering classical and nodular HL subtypes (C81.0x-C81.4x, C81.7x, C81.9x)
+# Excludes C81.5x and C81.6x (not valid HL codes in ICD-10)
+# Clinical rationale: These are the exact ICD-10 codes for Hodgkin lymphoma per WHO classification
 ICD10_HL_CODES: set[str] = {
     f"C81.{sub}{site}" for sub in ("0", "1", "2", "3", "4", "7", "9") for site in ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A")
 }  # 77 codes: C81.00 through C81.9A (no C81.5x or C81.6x)
 
+# HL-specific ICD-9 codes: 201.xx (Hodgkin's disease)
+# 72 codes covering all ICD-9 HL subtypes (201.0x-201.2x, 201.4x-201.7x, 201.9x)
+# Excludes 201.3x (not a valid HL code in ICD-9)
+# Clinical rationale: Pre-ICD-10 HL diagnosis codes, still present in historical data
 ICD9_HL_CODES: set[str] = {
     f"201.{sub}{site}" for sub in ("0", "1", "2", "4", "5", "6", "7", "9") for site in ("0", "1", "2", "3", "4", "5", "6", "7", "8")
 }  # 72 codes: 201.00 through 201.98 (no 201.3x)
 
+# Combined HL code set: 149 codes total (77 ICD-10 + 72 ICD-9)
+# Used for exact-match cohort verification
 ALL_HL_CODES: set[str] = ICD10_HL_CODES | ICD9_HL_CODES  # 149 codes
 
 
 def normalize_dx(code: str) -> str:
-    """Normalize diagnosis code: uppercase + remove dots."""
+    """Normalize diagnosis code to uppercase with dots removed.
+
+    Used for format-adaptive matching when DX column uses undotted format (C8110 vs C81.10).
+
+    Args:
+        code: Diagnosis code in any format (e.g., "C81.10", "c81.10", "C8110")
+
+    Returns:
+        str: Normalized code (e.g., "C8110")
+    """
     return code.upper().replace(".", "")
 
 
+# Normalized HL code sets for undotted-format matching
 ICD10_HL_NORMALIZED: set[str] = {normalize_dx(c) for c in ICD10_HL_CODES}
 ICD9_HL_NORMALIZED: set[str] = {normalize_dx(c) for c in ICD9_HL_CODES}
 ALL_HL_NORMALIZED: set[str] = ICD10_HL_NORMALIZED | ICD9_HL_NORMALIZED
 
-# Expected ICD-10 DX_TYPE values (valid or missing)
+# Valid DX_TYPE values for ICD-10 and ICD-9 codes (per PCORnet CDM specification)
+# "10" = ICD-10-CM, "09" = ICD-9-CM, NI = no information, "" = missing
 _VALID_ICD10_DX_TYPES = {"10", None, "", "NI"}
 _VALID_ICD9_DX_TYPES = {"09", None, "", "NI"}
 
@@ -47,11 +68,20 @@ _VALID_ICD9_DX_TYPES = {"09", None, "", "NI"}
 
 
 def detect_dx_format(diagnosis_path: Path, code_col: str = "DX") -> str:
-    """Detect whether code values use dotted (C81.10) or undotted (C8110) format.
+    """Detect whether diagnosis codes use dotted (C81.10) or undotted (C8110) format.
 
-    Samples up to 1000 non-null values and checks dot frequency.
-    Returns 'dotted' or 'undotted'.
-    Use code_col='CONDITION' for CONDITION table.
+    OneFlorida+ partners use inconsistent DX formatting. This function samples the
+    data to determine which format is predominant, enabling format-adaptive matching.
+
+    Clinical rationale: Format mismatch causes false negatives in cohort identification.
+    Auto-detection ensures accurate cohort capture across all partners.
+
+    Args:
+        diagnosis_path: Path to DIAGNOSIS (or CONDITION) Parquet file
+        code_col: Code column name (default "DX", use "CONDITION" for CONDITION table)
+
+    Returns:
+        str: "dotted" if >50% of sampled codes contain dots, else "undotted"
     """
     sample = pl.scan_parquet(diagnosis_path).filter(pl.col(code_col).is_not_null()).select(code_col).head(1000).collect()
     if sample.is_empty():
@@ -67,11 +97,22 @@ def detect_dx_format(diagnosis_path: Path, code_col: str = "DX") -> str:
 
 
 def check_dx_type_mismatches(hl_dx: pl.DataFrame) -> pl.DataFrame:
-    """Find HL DX records where code prefix disagrees with DX_TYPE.
+    """Find HL diagnosis records where code prefix disagrees with DX_TYPE field.
 
-    C81.xx with DX_TYPE not in ('10', None, '', 'NI') → mismatch.
-    201.xx with DX_TYPE not in ('09', None, '', 'NI') → mismatch.
-    Reports mismatches but does NOT exclude records (per locked decision).
+    Detects data quality issues where DX_TYPE field doesn't match the ICD version
+    implied by the code prefix (C81 = ICD-10, 201 = ICD-9). Mismatches may indicate
+    data extraction errors or retrospective ICD-9→ICD-10 mapping.
+
+    Clinical rationale: DX_TYPE mismatches don't invalidate diagnoses but indicate
+    potential data quality issues worth investigating. Records are reported but NOT
+    excluded from cohort (per locked decision).
+
+    Args:
+        hl_dx: DataFrame of HL diagnosis records (must include DX and DX_TYPE columns)
+
+    Returns:
+        pl.DataFrame: Mismatch records with columns [ID, DX, DX_TYPE, expected_type, SOURCE]
+            Returns empty DataFrame if no DX_TYPE column or no mismatches found
     """
     if "DX_TYPE" not in hl_dx.columns:
         return pl.DataFrame(
@@ -119,15 +160,40 @@ def verify_hl_cohort(
     encounter_path: Path,
     partner_col: str = "SOURCE",
 ) -> dict:
-    """Five-stage HL cohort verification algorithm.
+    """Five-stage HL cohort verification algorithm using exact 149-code matching.
 
-    Stage 1: Extract HL diagnosis records with format-adaptive matching
-    Stage 2: Method A — 2+ distinct DX_DATEs
-    Stage 3: Method B — 2+ distinct ADMIT_DATEs via ENCOUNTER join
-    Stage 4: Compare methods with per-partner breakdown
-    Stage 5: ICD version flag per patient with AMS/UMI caveat
+    Stage 1: Extract HL diagnosis records with format-adaptive matching (dotted vs undotted)
+    Stage 2: Method A — identify patients with 2+ distinct DX_DATEs (original method)
+    Stage 3: Method B — identify patients with 2+ distinct ADMIT_DATEs via ENCOUNTER join
+    Stage 4: Compare methods with per-partner breakdown and year distribution
+    Stage 5: ICD version flagging (ICD10_ONLY, ICD9_ONLY, BOTH) with AMS/UMI mapper caveat
 
-    All IDs and ENCOUNTERIDs cast to String. Uses lazy evaluation where possible.
+    Clinical rationale: The "2+ distinct dates" criterion distinguishes true HL patients
+    (multiple diagnosis dates across encounters) from single-diagnosis coding errors or
+    rule-out diagnoses. Dual-date methods provide cross-validation (Method A uses DX_DATE
+    directly, Method B uses ENCOUNTER join for independent verification).
+
+    Known issue: AMS and UMI retrospectively mapped all ICD-9 codes to ICD-10, so their
+    ICD10_ONLY patients may include originally ICD-9 diagnoses.
+
+    Args:
+        diagnosis_path: Path to DIAGNOSIS Parquet file
+        encounter_path: Path to ENCOUNTER Parquet file
+        partner_col: Partner/source column name (default "SOURCE")
+
+    Returns:
+        dict: Comprehensive cohort verification results including:
+            - dx_format: "dotted" | "undotted"
+            - total_hl_records, unique_patients: raw counts
+            - method_a_count, method_b_count: patients meeting each criterion
+            - a_only, b_only, intersection, union: Venn diagram counts
+            - per_partner: patient counts by partner site
+            - year_breakdown: earliest DX_DATE year distribution
+            - icd_flags: DataFrame with per-patient ICD version flags
+            - dx_type_mismatches: DataFrame of DX_TYPE mismatches
+            - method_a_ids_df, method_b_ids_df, union_ids_df: patient ID DataFrames
+            - hl_dx: full DataFrame of HL diagnosis records
+            - ams_umi_caveat: warning about ICD-9→ICD-10 mapping
     """
     # --- Stage 1: Extract HL DX records ---
     dx_format = detect_dx_format(diagnosis_path)
@@ -322,11 +388,24 @@ def enrollment_crosscheck(
     demographic_path: Path,
     partner_col: str = "SOURCE",
 ) -> dict:
-    """Cross-check HL cohort IDs against ENROLLMENT and DEMOGRAPHIC.
+    """Cross-check HL cohort IDs against ENROLLMENT table.
 
-    Reports coverage rates, uncovered patients by partner, and
-    coverage period summary (ENR_START_DATE → ENR_END_DATE).
-    All IDs cast to String.
+    Clinical rationale: Patients without ENROLLMENT records lack critical eligibility
+    and coverage information needed for payer analyses. Enrollment gaps may indicate
+    extraction completeness issues or patients with diagnoses but no insurance enrollment.
+
+    Args:
+        cohort_ids: DataFrame of cohort patient IDs (must have ID column)
+        enrollment_path: Path to ENROLLMENT Parquet file
+        demographic_path: Path to DEMOGRAPHIC Parquet file (for partner lookup)
+        partner_col: Partner/source column name (default "SOURCE")
+
+    Returns:
+        dict: Enrollment coverage results including:
+            - total_hl, with_enrollment, without_enrollment: patient counts
+            - coverage_pct: percentage with enrollment records
+            - uncovered_by_partner: dict of uncovered counts per partner
+            - coverage_summary_by_partner: enrollment date ranges per partner
     """
     cohort = cohort_ids.select(pl.col(PATID_COL).cast(pl.String))
 
@@ -417,8 +496,18 @@ def build_cohort_summary_df(
 ) -> pl.DataFrame:
     """Assemble per-patient summary DataFrame for CSV output.
 
-    Columns: ID, in_method_a, in_method_b, icd_flag, has_enrollment,
-    partner, earliest_dx_date, latest_dx_date, n_hl_dx_records.
+    Joins together cohort verification results (method flags, ICD versions, DX aggregates)
+    and enrollment results into a single patient-level DataFrame for export.
+
+    Args:
+        cohort_result: Result dict from verify_hl_cohort()
+        enrollment_result: Optional result dict from enrollment_crosscheck()
+        partner_col: Partner/source column name (default "SOURCE")
+
+    Returns:
+        pl.DataFrame: Per-patient summary with columns:
+            [ID, in_method_a, in_method_b, icd_flag, has_enrollment,
+             partner, earliest_dx_date, latest_dx_date, n_hl_dx_records]
     """
     union_df = cohort_result["union_ids_df"]
     method_a_df = cohort_result["method_a_ids_df"]
