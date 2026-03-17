@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-03-17)
 
 **Core value:** Data correctness — if the output data is wrong, nothing else matters
-**Current focus:** Phase 2: Validation & Suppression Hardening
+**Current focus:** Phase 3: Test Coverage - Fragile Areas
 
 ## Current Position
 
-Phase: 2 of 4 (Validation & Suppression Hardening)
-Plan: 3 of 3 in current phase
-Status: Complete
-Last activity: 2026-03-17 — Completed 02-03-PLAN.md (Pipeline Checkpoint Wiring)
+Phase: 3 of 4 (Test Coverage - Fragile Areas)
+Plan: 1 of 6 in current phase (03-04-PLAN.md complete)
+Status: In Progress
+Last activity: 2026-03-17 — Completed 03-04-PLAN.md (Checkpoint Validation & Partner Flag Tests)
 
-Progress: [████░░░░░░] 38% (Phase 1 complete, Phase 2: 3/3 plans complete - Phase 2 complete)
+Progress: [████░░░░░░] 42% (Phase 1-2 complete, Phase 3: 1/6 plans complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 7
-- Average duration: 5.6 minutes
-- Total execution time: 0.65 hours
+- Total plans completed: 8
+- Average duration: 5.1 minutes
+- Total execution time: 0.68 hours
 
 **By Phase:**
 
@@ -29,10 +29,11 @@ Progress: [████░░░░░░] 38% (Phase 1 complete, Phase 2: 3/3 p
 |-------|-------|-------|----------|
 | 01-documentation-baseline | 4 | 30 min | 7.5 min |
 | 02-validation-suppression-hardening | 3 | 10 min | 3.3 min |
+| 03-test-coverage-fragile-areas | 1 | 3 min | 3.0 min |
 
 **Recent Trend:**
-- Last 3 plans: 02-03 (3 min), 02-02 (4 min), 02-01 (3 min)
-- Trend: Phase 2 very fast (3-4 min avg) - refactoring and wiring tasks with clear specs
+- Last 3 plans: 03-04 (3 min), 02-03 (3 min), 02-02 (4 min)
+- Trend: Phase 2-3 very fast (3 min avg) - test writing with clear specs
 
 *Updated after each plan completion*
 
@@ -46,6 +47,7 @@ Progress: [████░░░░░░] 38% (Phase 1 complete, Phase 2: 3/3 p
 | Phase 02 P01 | 3 | 2 tasks | 4 files |
 | 02-validation-suppression-hardening P02 | 4 | 2 tasks | 10 files |
 | Phase 02 P03 | 3 | 2 tasks | 5 files |
+| Phase 03-test-coverage-fragile-areas P04 | 3 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -81,6 +83,9 @@ Recent decisions affecting current work:
 - [Phase 02-03]: validate_no_vanish instead of validate_row_count for clean_all.py (dedup reduces rows legitimately)
 - [Phase 02-03]: Checkpoint after write_cleaned() to validate persisted state, not in-memory state
 - [Phase 02-03]: Schema validation only for CRITICAL_SCHEMAS (4 tables), not all 22 tables (execution time vs value tradeoff)
+- [Phase 03-04]: Use Polars Series with explicit dtype for test expectations (Int8 matching actual output)
+- [Phase 03-04]: Document schema validation behavior rather than adding explicit checks (pandas raises KeyError)
+- [Phase 03-04]: Reorganize outcomes tests to align with source module location (src/clean/outcomes_flags.py)
 
 ### Pending Todos
 
@@ -93,5 +98,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-17 (plan execution)
-Stopped at: Completed 02-03-PLAN.md (Phase 2 complete)
-Resume file: N/A (awaiting Phase 3 planning)
+Stopped at: Completed 03-04-PLAN.md
+Resume file: N/A (continue with remaining Phase 3 plans)

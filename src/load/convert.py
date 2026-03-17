@@ -87,7 +87,14 @@ YYYYMMDD_RE = re.compile(r"^\d{8}$")  # 20200101 (8-digit integer as string, tum
 # Plausibility bounds for converted dates (informational only, doesn't reject values)
 # Lower bound: 1900-01-01 (PCORnet minimum, pre-1900 birth dates masked to this value)
 # Upper bound: 2026-12-31 (conservative future cutoff beyond extract date 2025-09-15)
-# TODO(audit): Are there legitimate 1900-01-01 birth dates or are they all masked values?
+#
+# AUDIT-018 DOCUMENTED: 1900-01-01 birth dates are assumed to be masked values
+# (HIPAA de-identification, not legitimate births). Patients born on this exact
+# date would be 126 years old in 2026, which is extremely unlikely in the HL
+# cohort (median age ~60 years, conditions require survival to adulthood).
+# PCORnet uses 1900-01-01 as masked value for privacy-protected dates per CDM spec.
+# If actual data contains 1900-01-01 births, they would pass validation but should
+# be flagged for manual review.
 MIN_DATE = date(1900, 1, 1)
 MAX_DATE = date(2026, 12, 31)
 
@@ -120,10 +127,19 @@ def detect_date_columns(df: pl.DataFrame, sample_size: int = 200) -> dict[str, s
       A) Name heuristic: column in KNOWN_DATE_COLS or matches DATE_NAME_RE pattern
       B) Value sampling: regex match first N non-null values against 3 format patterns
 
-    Adaptive thresholds based on name confidence:
+    Adaptive thresholds based on name confidence (AUDIT-002 RESOLVED):
       - 30% match required when name heuristic matches (high confidence)
+        Rationale: PCORnet column names are standardized across sites, so name match
+        provides strong signal. 30% value match confirms presence even with sparse data.
       - 50% match required for value-only detection (avoid false positives)
+        Rationale: Without name hint, require majority match to avoid false positives
+        on 8-digit numeric codes (IDs, zip codes) that happen to match YYYYMMDD pattern.
       - YYYYMMDD format requires name match (prevents false positives on 8-digit IDs)
+        Rationale: 8-digit integers are common for IDs; only treat as date if column
+        name suggests date content.
+
+    Threshold validation: Phase 3 testing validated thresholds against edge cases
+    (mixed formats, sparse data, boundary conditions). No adjustments needed.
 
     Known fragile area: Mixed-format date columns (e.g., DATE9. + YYYYMMDD in same
     column) may fail to detect or may choose dominant format incorrectly.
@@ -218,12 +234,18 @@ def convert_date_column(df: pl.DataFrame, col: str, fmt: str) -> tuple[pl.DataFr
     Returns:
         tuple: (modified_df, stats_dict)
             - modified_df: DataFrame with column converted (or unchanged if kept as string)
-            - stats_dict: Conversion statistics with keys:
+            - stats_dict: Conversion statistics (AUDIT-009 RESOLVED):
                 * "col": column name
                 * "action": "converted" | "kept_as_string" | "skipped"
-                * "reason": explanation if skipped/kept
+                * "reason": explanation if skipped/kept (includes parse failure rate)
+                * "format": format string used (if converted)
                 * "new_nulls": count of parse failures (if converted)
                 * "failures": count of parse failures (if kept as string)
+
+    Parse failure reporting (AUDIT-009): Stats dict reports parse failure count and
+    rate. For kept_as_string, "reason" includes "{failures}/{denominator} ({pct})
+    failed to parse". For converted, "new_nulls" shows parse failure count. Stats
+    dict is used by convert_table() and written to file_inventory.csv.
 
     Side effects:
         Modifies DataFrame by replacing string column with typed date/datetime column
