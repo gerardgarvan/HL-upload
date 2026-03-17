@@ -27,6 +27,7 @@ from src.report.encounter_payer_summary import (
 # Test 1: Collapse payer category - ALL PCORnet codes + sentinel values
 # ============================================================================
 
+@pytest.mark.payer
 @pytest.mark.parametrize(
     "payer_code,expected_category",
     [
@@ -114,6 +115,7 @@ def test_collapse_payer_category_all_pcornet_codes(payer_code, expected_category
 # Test 2: Dual-eligible code detection
 # ============================================================================
 
+@pytest.mark.payer
 @pytest.mark.parametrize(
     "payer_code,is_dual_code",
     [
@@ -145,6 +147,7 @@ def test_dual_eligible_code_detection(payer_code, is_dual_code):
 # Test 3: Effective payer fallback to secondary
 # ============================================================================
 
+@pytest.mark.payer
 @pytest.mark.parametrize(
     "primary,secondary,expected_effective",
     [
@@ -194,6 +197,7 @@ def test_payer_fallback_to_secondary(primary, secondary, expected_effective, mak
 # Test 4: Payer fallback when secondary also invalid
 # ============================================================================
 
+@pytest.mark.payer
 def test_payer_fallback_when_secondary_also_invalid(make_encounter_df):
     """Test effective payer when both primary and secondary are sentinels.
 
@@ -221,6 +225,7 @@ def test_payer_fallback_when_secondary_also_invalid(make_encounter_df):
 # Test 5: Dual-eligible detection with null secondary (AUDIT-005 FIX)
 # ============================================================================
 
+@pytest.mark.payer
 @pytest.mark.parametrize(
     "primary,secondary,expected_dual",
     [
@@ -277,6 +282,7 @@ def test_dual_eligible_detection_with_null_secondary(primary, secondary, expecte
 # Test 6: Payer category with dual-eligible override
 # ============================================================================
 
+@pytest.mark.payer
 @pytest.mark.parametrize(
     "effective_payer,dual_eligible,expected_category",
     [
@@ -314,6 +320,7 @@ def test_payer_category_dual_eligible_override(effective_payer, dual_eligible, e
 # Test 7: INCLUDE_99_AS_SENTINEL flag behavior (AUDIT-001)
 # ============================================================================
 
+@pytest.mark.payer
 def test_include_99_as_sentinel_false_default():
     """Test INCLUDE_99_AS_SENTINEL=False (current default).
 
@@ -341,6 +348,7 @@ def test_include_99_as_sentinel_false_default():
     assert "9999" not in INVALID_PAYER
 
 
+@pytest.mark.payer
 def test_include_99_as_sentinel_true_behavior(make_encounter_df, monkeypatch):
     """Test INCLUDE_99_AS_SENTINEL=True behavior (if flag enabled).
 
@@ -370,6 +378,7 @@ def test_include_99_as_sentinel_true_behavior(make_encounter_df, monkeypatch):
 # Test 8: Sentinel constants verification
 # ============================================================================
 
+@pytest.mark.payer
 def test_invalid_payer_sentinel_constants():
     """Verify INVALID_PAYER constant contains expected sentinel values.
 
@@ -380,6 +389,7 @@ def test_invalid_payer_sentinel_constants():
     assert INVALID_PAYER == expected_sentinels
 
 
+@pytest.mark.payer
 def test_dual_eligible_codes_constant():
     """Verify DUAL_ELIGIBLE_CODES constant contains expected dual codes.
 

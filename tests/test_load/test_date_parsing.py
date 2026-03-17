@@ -29,6 +29,7 @@ from src.load.convert import (
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.dates
 @pytest.mark.parametrize(
     "pattern,test_string,expected_match",
     [
@@ -88,6 +89,7 @@ def test_date_format_regex_matching(pattern, test_string, expected_match):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.dates
 @pytest.mark.parametrize(
     "column_data,expected_detected",
     [
@@ -124,6 +126,7 @@ def test_detect_date_columns_null_handling(column_data, expected_detected):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.dates
 @pytest.mark.parametrize(
     "date_strings,expected_format",
     [
@@ -162,6 +165,7 @@ def test_detect_date_columns_format_detection(date_strings, expected_format):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.dates
 @pytest.mark.parametrize(
     "date_mix,expected_detected,expected_format",
     [
@@ -223,6 +227,7 @@ def test_detect_date_columns_mixed_formats(date_mix, expected_detected, expected
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.dates
 @pytest.mark.parametrize(
     "date_string,expected_date,description",
     [
@@ -263,6 +268,7 @@ def test_convert_date_column_boundary_dates(date_string, expected_date, descript
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.dates
 @pytest.mark.parametrize(
     "valid_count,invalid_count,should_convert",
     [
@@ -309,6 +315,7 @@ def test_convert_date_column_invalid_handling(valid_count, invalid_count, should
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.dates
 @pytest.mark.parametrize(
     "values,should_convert,expected_new_nulls",
     [
@@ -359,6 +366,7 @@ def test_convert_date_column_nulls_preserved(values, should_convert, expected_ne
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.dates
 @pytest.mark.parametrize(
     "test_date,within_range,description",
     [
@@ -400,6 +408,7 @@ def test_validate_date_range_plausibility(test_date, within_range, description):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.dates
 @pytest.mark.parametrize(
     "date_string,expected_format,description",
     [
@@ -435,6 +444,7 @@ def test_format_fallback_order(date_string, expected_format, description):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.dates
 def test_convert_date_column_all_null():
     """Test conversion skips all-null columns with informative status."""
     df = pl.DataFrame({"test_date": [None, None, None]})
@@ -451,6 +461,7 @@ def test_convert_date_column_all_null():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.dates
 def test_convert_date_column_single_valid_date():
     """Test conversion works with just one valid date value."""
     df = pl.DataFrame({"test_date": ["01JAN2020"]})
@@ -466,6 +477,7 @@ def test_convert_date_column_single_valid_date():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.dates
 def test_convert_date_column_datetime_format():
     """Test DATETIME format converts to datetime dtype (not just date)."""
     df = pl.DataFrame({"test_datetime": ["01JAN2020:14:30:00", "15FEB2020:09:15:30"]})

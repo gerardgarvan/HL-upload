@@ -20,6 +20,7 @@ from src.validate.checkpoint import (
 # Test validate_row_count: Strict mode (tolerance=0.0)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.checkpoint
 def test_validate_row_count_exact_match_pass():
     """Row count matches expected exactly - validation should pass."""
     df = pl.DataFrame({"ID": ["PT001", "PT002", "PT003"]})
@@ -33,6 +34,7 @@ def test_validate_row_count_exact_match_pass():
     assert "[CHECKPOINT PASS]" in result.message
 
 
+@pytest.mark.checkpoint
 def test_validate_row_count_exact_match_fail():
     """Row count differs from expected - strict mode should fail."""
     df = pl.DataFrame({"ID": ["PT001", "PT002"]})
@@ -51,6 +53,7 @@ def test_validate_row_count_exact_match_fail():
 # Test validate_row_count: Tolerance mode (tolerance>0.0)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.checkpoint
 def test_validate_row_count_tolerance_pass():
     """Row count within tolerance - validation should pass.
 
@@ -66,6 +69,7 @@ def test_validate_row_count_tolerance_pass():
     assert "[CHECKPOINT PASS]" in result.message
 
 
+@pytest.mark.checkpoint
 def test_validate_row_count_tolerance_fail():
     """Row count exceeds tolerance - validation should fail.
 
@@ -85,6 +89,7 @@ def test_validate_row_count_tolerance_fail():
     assert "[CHECKPOINT FAIL]" in error_msg
 
 
+@pytest.mark.checkpoint
 def test_validate_row_count_tolerance_gain():
     """Row count increases are also checked against tolerance.
 
@@ -106,6 +111,7 @@ def test_validate_row_count_tolerance_gain():
 # Test validate_no_vanish: Catastrophic data loss detection
 # ---------------------------------------------------------------------------
 
+@pytest.mark.checkpoint
 def test_validate_no_vanish_pass():
     """DataFrame has sufficient rows - validation should pass."""
     df = pl.DataFrame({"ID": [f"PT{i:03d}" for i in range(100)]})
@@ -118,6 +124,7 @@ def test_validate_no_vanish_pass():
     assert ">= 50" in result.message
 
 
+@pytest.mark.checkpoint
 def test_validate_no_vanish_fail():
     """DataFrame has too few rows - catastrophic loss detected."""
     df = pl.DataFrame({"ID": [f"PT{i:03d}" for i in range(10)]})
@@ -132,6 +139,7 @@ def test_validate_no_vanish_fail():
     assert "[CHECKPOINT FAIL]" in error_msg
 
 
+@pytest.mark.checkpoint
 def test_validate_no_vanish_exact_boundary():
     """DataFrame exactly at minimum threshold - should pass."""
     df = pl.DataFrame({"ID": [f"PT{i:03d}" for i in range(50)]})
@@ -145,6 +153,7 @@ def test_validate_no_vanish_exact_boundary():
 # Test validate_schema: Column presence and dtype matching
 # ---------------------------------------------------------------------------
 
+@pytest.mark.checkpoint
 def test_validate_schema_all_columns_present_pass():
     """All expected columns present with correct dtypes - validation should pass."""
     df = pl.DataFrame({
@@ -167,6 +176,7 @@ def test_validate_schema_all_columns_present_pass():
     assert "columns=3" in result.message
 
 
+@pytest.mark.checkpoint
 def test_validate_schema_missing_column_fail():
     """Expected column missing from DataFrame - validation should fail."""
     df = pl.DataFrame({
@@ -189,6 +199,7 @@ def test_validate_schema_missing_column_fail():
     assert "[CHECKPOINT FAIL]" in error_msg
 
 
+@pytest.mark.checkpoint
 def test_validate_schema_wrong_dtype_fail():
     """Column has wrong dtype - validation should fail."""
     df = pl.DataFrame({
@@ -208,6 +219,7 @@ def test_validate_schema_wrong_dtype_fail():
     assert "DX_DATE" in error_msg
 
 
+@pytest.mark.checkpoint
 def test_validate_schema_dtype_flexibility():
     """Column dtype is one of allowed tuple options - validation should pass.
 
@@ -229,6 +241,7 @@ def test_validate_schema_dtype_flexibility():
     assert "[SCHEMA OK]" in result.message
 
 
+@pytest.mark.checkpoint
 def test_validate_schema_dtype_flexibility_fail():
     """Column dtype not in allowed tuple options - validation should fail."""
     df = pl.DataFrame({
@@ -248,6 +261,7 @@ def test_validate_schema_dtype_flexibility_fail():
     assert "COUNT" in error_msg
 
 
+@pytest.mark.checkpoint
 def test_validate_schema_extra_columns_allowed():
     """DataFrame has extra columns beyond expected - should pass (non-strict).
 
@@ -272,6 +286,7 @@ def test_validate_schema_extra_columns_allowed():
     assert "columns=3" in result.message  # Only 3 validated, not all 5
 
 
+@pytest.mark.checkpoint
 def test_validate_schema_multiple_missing_columns():
     """Multiple expected columns missing - all should be reported."""
     df = pl.DataFrame({
@@ -295,6 +310,7 @@ def test_validate_schema_multiple_missing_columns():
     assert "DX_DATE" in error_msg
 
 
+@pytest.mark.checkpoint
 def test_validate_schema_multiple_dtype_mismatches():
     """Multiple columns have wrong dtypes - all should be reported."""
     df = pl.DataFrame({

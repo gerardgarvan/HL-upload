@@ -66,6 +66,7 @@ def minimal_table_map(tmp_path):
     }
 
 
+@pytest.mark.reports
 class TestPatientLevelDerivedStructure:
     """Test build_patient_level_derived() output structure."""
 
@@ -120,6 +121,7 @@ class TestPatientLevelDerivedStructure:
         assert "FIRST_HL_DX_DATE" in result.columns
 
 
+@pytest.mark.reports
 class TestSuppressionAppliedInReports:
     """Test that suppression is correctly applied in report aggregations."""
 
@@ -191,6 +193,7 @@ class TestSuppressionAppliedInReports:
         assert suppressed_df["count_suppressed"][2] == "15"  # 15 safe
 
 
+@pytest.mark.reports
 class TestAggregationCorrectnessSpotCheck:
     """Spot-check aggregation correctness with known inputs."""
 
@@ -226,6 +229,7 @@ class TestAggregationCorrectnessSpotCheck:
         assert total_count == 3  # 4 rows - 1 null = 3
 
 
+@pytest.mark.reports
 class TestDQMetricsAggregation:
     """Test aggregate_dq_metrics() function."""
 
@@ -271,6 +275,7 @@ class TestDQMetricsAggregation:
             assert isinstance(persistence["by_year"], list)
 
 
+@pytest.mark.reports
 class TestReportEdgeCases:
     """Test edge cases and error handling."""
 

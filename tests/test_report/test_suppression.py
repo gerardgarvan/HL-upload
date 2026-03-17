@@ -16,6 +16,7 @@ import pytest
 from src.report.suppression import suppress, flag_small_cell, DEFAULT_THRESHOLD
 
 
+@pytest.mark.reports
 class TestSuppressBoundaryValues:
     """Exhaustive boundary value tests for suppress() function."""
 
@@ -65,6 +66,7 @@ class TestSuppressBoundaryValues:
         assert suppress(2, threshold=3) == "-"  # 2 < 3, suppress
 
 
+@pytest.mark.reports
 class TestFlagSmallCellBoundaryValues:
     """Exhaustive boundary value tests for flag_small_cell() function."""
 
@@ -114,6 +116,7 @@ class TestFlagSmallCellBoundaryValues:
         assert flag_small_cell(2, threshold=3) == "2 ⚠"   # 2 < 3, flag
 
 
+@pytest.mark.reports
 class TestSuppressionConsistency:
     """Test consistency between suppress() and flag_small_cell() functions.
 
@@ -160,6 +163,7 @@ class TestSuppressionConsistency:
         assert DEFAULT_THRESHOLD == 10  # CMS Cell Suppression Policy threshold
 
 
+@pytest.mark.reports
 class TestSuppressionEdgeCases:
     """Test edge cases and error handling."""
 
