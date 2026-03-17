@@ -166,15 +166,29 @@ def capture_golden_manifest(
 
     for output_dir, priority in output_dirs:
         if not output_dir.exists():
-            print(f"Skipping {output_dir.relative_to(PROJECT_ROOT)} (not found)")
+            # Display path relative to PROJECT_ROOT if possible, otherwise use absolute
+            try:
+                display_path = output_dir.relative_to(PROJECT_ROOT)
+            except ValueError:
+                display_path = output_dir
+            print(f"Skipping {display_path} (not found)")
             continue
 
-        print(f"\nProcessing {output_dir.relative_to(PROJECT_ROOT)}/ [{priority} priority]")
+        # Display path relative to PROJECT_ROOT if possible, otherwise use absolute
+        try:
+            display_path = output_dir.relative_to(PROJECT_ROOT)
+        except ValueError:
+            display_path = output_dir
+        print(f"\nProcessing {display_path}/ [{priority} priority]")
 
         # Capture Parquet files
         parquet_files = sorted(output_dir.rglob("*.parquet"))
         for parquet_file in parquet_files:
-            rel_path = str(parquet_file.relative_to(PROJECT_ROOT))
+            # Store path relative to PROJECT_ROOT if possible, otherwise use absolute
+            try:
+                rel_path = str(parquet_file.relative_to(PROJECT_ROOT))
+            except ValueError:
+                rel_path = str(parquet_file)
             print(f"  {rel_path}")
 
             # SHA256 checksum (efficient chunked reading)
@@ -198,7 +212,10 @@ def capture_golden_manifest(
         # Capture CSV files (reports only, not raw data)
         csv_files = sorted(output_dir.glob("*.csv"))
         for csv_file in csv_files:
-            rel_path = str(csv_file.relative_to(PROJECT_ROOT))
+            try:
+                rel_path = str(csv_file.relative_to(PROJECT_ROOT))
+            except ValueError:
+                rel_path = str(csv_file)
             print(f"  {rel_path}")
 
             # SHA256 checksum
@@ -222,7 +239,10 @@ def capture_golden_manifest(
         # Capture PNG files (figures - binary, just checksum and size)
         png_files = sorted(output_dir.rglob("*.png"))
         for png_file in png_files:
-            rel_path = str(png_file.relative_to(PROJECT_ROOT))
+            try:
+                rel_path = str(png_file.relative_to(PROJECT_ROOT))
+            except ValueError:
+                rel_path = str(png_file)
             print(f"  {rel_path}")
 
             # SHA256 checksum only (binary file)

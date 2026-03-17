@@ -1,0 +1,111 @@
+{
+  "manifest_version": "1.0",
+  "captured": "2026-03-17T18:11:48.674899+00:00",
+  "pipeline_commit": "aa28a02",
+  "files": {
+    "derived\\encounter_payer_summary.parquet": {
+      "sha256": "49882c1db345e2a7706283f360529310ec6419e11d8474c5458fcf6ba5ff92f9",
+      "schema": {
+        "ID": "String",
+        "N_ENCOUNTERS": "Int64",
+        "N_ENCOUNTERS_WITH_PAYER": "Int64",
+        "N_DISTINCT_PAYER_CATEGORIES": "Int64",
+        "PAYER_CATEGORY_PRIMARY": "String",
+        "PAYER_CATEGORY_AT_FIRST_DX": "String",
+        "PAYER_CATEGORY_AT_FIRST_CHEMO": "String",
+        "PAYER_CATEGORY_AT_LAST_CHEMO": "String",
+        "PAYER_CATEGORY_MOST_FREQUENT_AT_CHEMO": "String",
+        "PAYER_TRANSITION": "Int64"
+      },
+      "row_count": 12,
+      "size_bytes": 4546,
+      "priority": "HIGH",
+      "captured": "2026-03-17T18:11:48.661380+00:00"
+    },
+    "reports\\dual_eligible_prevalence.csv": {
+      "sha256": "f57a3b5cab5b690eb19a576cbef29410c38ae0c628bc784d23ef52f4a91e0475",
+      "columns": [
+        "Metric",
+        "Value"
+      ],
+      "row_count": 4,
+      "size_bytes": 85,
+      "priority": "MEDIUM",
+      "captured": "2026-03-17T18:11:48.670275+00:00"
+    },
+    "reports\\encounter_payer_summary.csv": {
+      "sha256": "2291b1b60dbe2d526d2238c3c9973e81d31ec4d807819c26ea01882266996edb",
+      "columns": [
+        "Variable",
+        "Category",
+        "N",
+        "Pct"
+      ],
+      "row_count": 29,
+      "size_bytes": 1224,
+      "priority": "MEDIUM",
+      "captured": "2026-03-17T18:11:48.670845+00:00"
+    },
+    "reports\\payer_at_first_chemo.csv": {
+      "sha256": "7bc7d036bca8ab522403d02109f74e748b1326f667e71603405fbccf1d4e1b6c",
+      "columns": [
+        "PAYER_CATEGORY_AT_FIRST_CHEMO",
+        "N"
+      ],
+      "row_count": 5,
+      "size_bytes": 93,
+      "priority": "MEDIUM",
+      "captured": "2026-03-17T18:11:48.671316+00:00"
+    },
+    "reports\\payer_at_first_dx.csv": {
+      "sha256": "be69a813b1483a0c63d30f5a9c327fb87bcb75d5be7cec3f2b9369d0bde0003e",
+      "columns": [
+        "PAYER_CATEGORY_AT_FIRST_DX",
+        "N"
+      ],
+      "row_count": 5,
+      "size_bytes": 90,
+      "priority": "MEDIUM",
+      "captured": "2026-03-17T18:11:48.671932+00:00"
+    },
+    "reports\\payer_crosstab_first_dx_first_chemo.csv": {
+      "sha256": "8e7d329f1e0dc65af5c9b38d5f97d867fee16d74cb5f4181b6f76a55f475f8b8",
+      "columns": [
+        "PAYER_AT_FIRST_DX",
+        "Medicare",
+        "Medicaid",
+        "Private",
+        "Other government",
+        "Unknown",
+        "Total"
+      ],
+      "row_count": 6,
+      "size_bytes": 212,
+      "priority": "MEDIUM",
+      "captured": "2026-03-17T18:11:48.672634+00:00"
+    },
+    "reports\\payer_transition_prevalence.csv": {
+      "sha256": "530934b8d208d72968440d299171b58c763f755dfa99cc46f7210964cad58f83",
+      "columns": [
+        "Metric",
+        "Value"
+      ],
+      "row_count": 3,
+      "size_bytes": 62,
+      "priority": "MEDIUM",
+      "captured": "2026-03-17T18:11:48.673142+00:00"
+    },
+    "reports\\figures\\insurance_payer_at_first_chemo.png": {
+      "sha256": "b85ec09b8db0c94cddd4283ffc808ebd72894a4a19f849cd42fa14c7a6e7b6ae",
+      "size_bytes": 23970,
+      "priority": "LOW",
+      "captured": "2026-03-17T18:11:48.674654+00:00"
+    },
+    "reports\\figures\\insurance_payer_at_first_dx.png": {
+      "sha256": "df7e2b22eb308f7f34cf698affd85fe5d4062cd9c2953cf6ff2451d820c99529",
+      "size_bytes": 23190,
+      "priority": "LOW",
+      "captured": "2026-03-17T18:11:48.674862+00:00"
+    }
+  }
+}
