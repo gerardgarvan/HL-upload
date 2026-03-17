@@ -1,197 +1,140 @@
 # Project Research Summary
 
-**Project:** HL Data Loading and Cleaning Pipeline
-**Study:** UFPTI 2405-HLX17A — "Insurance Inequities in Hodgkin Lymphoma Treatment and Survivorship in the Southeast"
-**PI:** Raymond Mailhot | **IRB:** IRB202400721
-**Domain:** Hodgkin Lymphoma / OneFlorida+ PCORnet CDM v6.1
-**Researched:** 2026-02-27
+**Project:** HL Data Pipeline — Hardening & Documentation
+**Domain:** Clinical data pipeline hardening & documentation
+**Researched:** 2026-03-17
 **Confidence:** HIGH
-
----
 
 ## Executive Summary
 
-This project builds the data loading and cleaning layer for the Hodgkin Lymphoma insurance inequities study (UFPTI 2405-HLX17A). It ingests 22 PCORnet CDM v6.1 CSV flat files from the OneFlorida+ Mailhot_V1 cohort (9,331 HL patients, ICD-10 C81\*/ICD-9 201\*, 2+ encounters on different dates, Jan 2012–Mar 2025) on UF's HiPerGator HPC cluster. Files use SAS DATE9. formatted strings (e.g., "01JAN2020"), not raw integer dates.
+This is a brownfield hardening project: an existing Polars-based clinical data pipeline that works but needs to be trustworthy, understandable, and reproducible. The pipeline processes OneFlorida+ PCORnet CDM data for a Hodgkin Lymphoma cohort through 5 phases (convert, validate, clean, assemble, report).
 
-An existing `HL-EDA` project has already completed a full EDA pipeline (load→clean→characterize→visualize) using pandas+pyarrow. This project extends and refactors the loading/cleaning layers to: (1) convert CSVs to Parquet for 10-100x faster reads, (2) add Polars and DuckDB for speed, (3) deepen validation beyond EDA-level cleaning, and (4) produce standalone analysis-ready Parquet datasets.
+The recommended approach is documentation-first: understand and document the pipeline before adding validation and tests. This forces a thorough review of every function, surfaces hidden assumptions, and creates the foundation for meaningful tests. The key risk is breaking the working pipeline during hardening — mitigated by creating golden output files before making any changes.
 
-The recommended approach adds **Polars and DuckDB** to the existing pandas+pyarrow stack. Polars handles fast CSV-to-Parquet conversion; DuckDB provides SQL capability (answering the question about SQL on HiPerGator); pandas remains for compatibility with existing HL-EDA code. The one-time CSV-to-Parquet conversion is the single highest-impact optimization.
-
-The primary risks are: (1) **Partner data heterogeneity** — 15 partners with wildly different table availability (FLM is claims-only, VRT is death-only, 3 partners lack payer data critical for the insurance inequities study); (2) **HIPAA compliance** — OneFlorida+ LDS data contains PHI, requiring storage on `/blue` or `/orange` with small cell suppression (1–10); (3) **Tumor registry limitations** — only 3 of 15 partners (ORL, TMH, UFH) provide TUMOR_REGISTRY data, and it's stale, limiting staging-stratified analysis.
-
----
+The critical areas to harden are: payer logic (complex fallback chains, untested), date parsing (silent degradation), small-cell suppression (HIPAA compliance, inconsistent application), and phase boundary validation (no row-count checks between phases).
 
 ## Key Findings
 
 ### Recommended Stack
 
-**See:** [TECH_RESEARCH.md](./TECH_RESEARCH.md) for full benchmarks and comparison tables.
+Keep the existing stack (Python 3.11, Polars, PyArrow, pytest, ruff). Add lightweight hardening tools:
 
-**Existing stack (from HL-EDA):** python=3.11, pandas>=2.2, pyarrow>=18.0, matplotlib, seaborn, jinja2, tabulate, tomli. Conda env `hl-eda` on `/blue/erin.mobley-hl.bcu`.
+- **Pandera (polars backend):** Schema validation at phase boundaries — lightweight, Polars-native
+- **pytest-cov:** Coverage tracking to measure and improve test coverage
+- **Sphinx + autodoc2 + myst-parser:** Generate API docs from docstrings (after docstrings are complete)
 
-**Add to existing stack:**
+Avoid Great Expectations (too heavy), Airflow/Prefect (overkill for batch pipeline), and rigid schema validation for all 22 tables (source schema drifts).
 
-| Technology | Purpose | Why |
-|-----------|---------|-----|
-| **Polars** | CSV-to-Parquet conversion, fast loading | Fastest Python DataFrame library (~0.4s/500MB); lazy evaluation; auto-parallelizes |
-| **DuckDB** | SQL queries on Parquet, cross-table joins | No-server SQL on HiPerGator; out-of-core capable; answers "does HiPerGator have SQL?" |
+### Expected Features
 
-**Keep from HL-EDA (already installed):**
+**Must have (table stakes):**
+- Docstrings on all public functions (LOW complexity, HIGH value)
+- Pipeline overview document (MEDIUM complexity)
+- Row-count validation between phases (MEDIUM complexity)
+- Test coverage for payer logic and date parsing (HIGH complexity)
+- Consistent small-cell suppression (MEDIUM complexity — audit + centralize)
+- Setup/reproducibility documentation (MEDIUM complexity)
 
-| Technology | Purpose | Why |
-|-----------|---------|-----|
-| **Pandas + PyArrow** | Downstream analysis, compatibility with HL-EDA code | Existing clean/characterize/visualize code uses pandas throughout |
-| **PyArrow / Parquet** | Storage format after initial conversion | 5-10x compression; columnar reads; type-preserving |
-| **Conda / Mamba** | Environment management on HiPerGator | Existing `hl-eda` env on `/blue` |
+**Should have (v1.x):**
+- Sphinx-generated API docs
+- Regression tests (golden file comparison)
+- Structured logging
 
-### Healthcare Data Context
+**Defer (v2+):**
+- Data lineage tracking
+- Incremental processing
 
-**See:** [HEALTHCARE_DATA_RESEARCH.md](./HEALTHCARE_DATA_RESEARCH.md) for full PCORnet CDM table schemas and cleaning pipeline.
+### Architecture Approach
 
-**Correction from initial research:** The cohort uses PCORnet CDM **v6.1** (not v7.0). The Mailhot_V1 extract contains **22 tables** for **9,331 HL patients** from **15 partners**. Data integrates EHR sources (UF Health, AdventHealth, NCH, etc.) with Florida Medicaid claims (FLM). The existing HL-EDA project has already implemented value set mapping, deduplication, and age masking for all 22 tables. Key characteristics:
+Layer hardening on top of the existing architecture without changing it. Add checkpoint validation at phase boundaries (between scripts), docstrings throughout `src/`, expanded tests in `tests/`, and documentation in `docs/`. The build order matters: document first (forces understanding), validate second (catches silent failures), test third (locks in correctness), then make reproducible.
 
-**Must-have cleaning steps (table stakes):**
-- SAS date conversion for all date columns (days since 1960-01-01)
-- Schema validation against PCORnet CDM specification
-- Primary/foreign key integrity checks (PATID across all tables, ENCOUNTERID linkage)
-- Coded field validation (ENC_TYPE, DX_TYPE, PX_TYPE against CDM value sets)
-- Date consistency checks (discharge ≥ admission, events after birth/before death)
-- Missing value classification (distinguish `NI` / `UN` / `OT` / true NULL)
+**Major components:**
+1. Documentation layer — docstrings in `src/`, pipeline overview in `docs/`
+2. Validation layer — phase boundary checkpoints, schema validation
+3. Testing layer — expanded `tests/` covering payer, date, report logic
+4. Reproducibility layer — setup docs, environment pinning
 
-**Should-have cleaning steps (quality improvement):**
-- Clinical code validation (ICD-10-CM format, NDC format, LOINC check digits)
-- Vital signs and lab result plausibility ranges
-- Duplicate detection (exact and near-duplicates, encounter fragmentation)
-- Cross-table consistency (sex-diagnosis alignment, date-code version concordance)
-- Data quality report generation (completeness, conformance, plausibility, persistence)
+### Critical Pitfalls
 
-**Defer (study-specific, v2+):**
-- Imputation strategies for missing data
-- Advanced patient linkage via HASH_TOKEN
-- Study-specific cohort definitions and analytic variable derivation
-- Longitudinal consistency analysis across quarterly refreshes
-
-### SAS Date Handling
-
-**See:** [SAS_DATES_RESEARCH.md](./SAS_DATES_RESEARCH.md) for full conversion formulas, pitfall catalog, and validation functions.
-
-**Correction from initial research:** The Mailhot_V1 CSV files use **SAS DATE9. formatted strings** (e.g., "01JAN2020", "15MAR2023"), **not** raw integer SAS dates. This was confirmed by examining the existing HL-EDA codebase, which parses dates using `pd.to_datetime(series, format="%d%b%Y")` in `masking.py`. Datetime columns use `%d%b%Y:%H:%M:%S` format.
-
-The integer-to-date conversion formulas from the initial research are **not needed** for this cohort. The actual conversion is string parsing:
-
-| Conversion | Python (pandas) | Polars |
-|-----------|----------------|-------|
-| SAS DATE9. → Date | `pd.to_datetime(col, format="%d%b%Y", errors="coerce")` | `pl.col("date").str.to_date("%d%b%Y")` |
-| SAS DATETIME. → Datetime | `pd.to_datetime(col, format="%d%b%Y:%H:%M:%S", errors="coerce")` | `pl.col("dt").str.to_datetime("%d%b%Y:%H:%M:%S")` |
-
-**Note:** TUMOR_REGISTRY tables may use different date formats (NAACCR standard is YYYYMMDD). Test separately.
-
-### HiPerGator Environment
-
-**See:** [HIPERGATOR_RESEARCH.md](./HIPERGATOR_RESEARCH.md) for full SLURM reference, storage tiers, and resource sizing.
-
-**Major constraints and guidance:**
-
-| Constraint | Detail |
-|-----------|--------|
-| **Storage** | Work from `/blue/<group>` only; `/home` is 40GB and backed up (no PHI); `/orange` for archival |
-| **Compute** | Never run on login nodes; use SLURM batch (`sbatch`) or interactive (`srun`) |
-| **Resources** | Default is 1 core / 4GB / 10min — always set explicit `--cpus-per-task`, `--mem`, `--time` |
-| **SQL** | No traditional SQL server (MySQL/MSSQL); SQLite via Python stdlib; DuckDB via conda install |
-| **Conda** | Use `mamba` for speed; environments stored on `/blue`; never `pip install` outside conda env |
-| **Interactive** | Open OnDemand (ood.rc.ufl.edu) for Jupyter/RStudio; allocates compute node automatically |
-| **Multi-file** | SLURM array jobs for processing independent files in parallel |
-
-### Critical Pitfalls (Revised for HL Study)
-
-**Top 5 pitfalls for the Mailhot_V1 HL cohort:**
-
-1. **Partner data heterogeneity (CRITICAL for insurance study)** — 15 partners with wildly different data availability. BND, UCI, UMI have **no PAYER_TYPE_PRIMARY** — the core variable for an insurance inequities study. FLM is claims-only (no labs, vitals, prescribing). VRT has death data only. CHP has no ENCOUNTERID in labs. **Prevention:** Report all analyses stratified by SOURCE; document which partners contribute to which analyses; do not pool across partners without accounting for availability.
-
-2. **HIPAA violations from insecure data handling (CRITICAL)** — OneFlorida+ LDS data contains PHI (full dates, ZIP codes, pseudoidentified PATIDs). **Prevention:** Store exclusively on `/blue` or `/orange`; no local copies; suppress cell counts 1–10 in all outputs (existing `mask_small_cells` function from HL-EDA).
-
-3. **ICD-9→ICD-10 mapping by specific partners (HIGH)** — AMS and UMI mapped all historical ICD-9 codes to ICD-10, meaning pre-2015 C81\* codes from these partners are actually converted 201\* codes. This inflates ICD-10 counts and breaks ICD version-date concordance checks. **Prevention:** Flag AMS/UMI records with `ICD_MAPPED=True`; exclude from concordance analysis; report separately.
-
-4. **Tumor registry data severely limited (MODERATE)** — Only ORL (stale, Dec 2020), TMH (stale, Feb 2019), and UFH (May 2024) have TUMOR_REGISTRY data. Staging, histology, and NAACCR treatment data is unavailable for ~80% of the cohort. **Prevention:** Treat TR analysis as supplementary; do not make staging a required stratification variable.
-
-5. **Age masking breaks temporal logic (MODERATE)** — Patients >89 have BIRTH_DATE=01JAN1900 and AGE_AT_DIAGNOSIS=200. Birth-before-event checks will flag these as violations; age calculations will produce impossible ages. **Prevention:** Check `BIRTH_DATE_MASKED` flag before temporal/age calculations; fold masked ages into 65+ band (existing HL-EDA approach).
-
----
+1. **Documenting without understanding** — write "why" not "what"; take time to understand clinical logic before documenting
+2. **Tests that pass but don't validate** — require value-level assertions, not just "runs without error"
+3. **Breaking the working pipeline** — create golden output files first; never change function signatures during hardening
+4. **Inconsistent small-cell suppression** — centralize `_suppress()` to single function; audit all report outputs
+5. **Silent date parsing failures** — verify all expected date columns are Date type after conversion; don't rely solely on regex heuristic
 
 ## Implications for Roadmap
 
-See `ROADMAP.md` for the full revised roadmap. Key changes from the initial generic roadmap:
+### Phase 1: Documentation & Baseline
+**Rationale:** Must understand the pipeline before changing it. Golden output files protect against regressions.
+**Delivers:** Docstrings on all functions, pipeline overview doc, golden output files for regression comparison
+**Addresses:** Docstrings, pipeline overview, understanding of logic
+**Avoids:** "Documenting without understanding" pitfall
 
-1. **Phase 1 is much shorter** (0.5–1 day vs. 1–2 days) because the HL-EDA project already has a working conda env, SLURM templates, and HPC config. We extend rather than rebuild.
+### Phase 2: Validation & Suppression Hardening
+**Rationale:** After understanding the pipeline, add checkpoints to catch silent failures. Fix HIPAA compliance issue.
+**Delivers:** Phase boundary validation (row counts, schema checks), centralized small-cell suppression, config validation
+**Addresses:** Row-count validation, schema validation, suppression audit, config validation
+**Avoids:** "Inconsistent suppression" and "silent date parsing" pitfalls
 
-2. **Phase 2 uses string parsing, not epoch arithmetic** — SAS DATE9. strings ("01JAN2020"), not integer days since 1960. This simplifies conversion significantly.
+### Phase 3: Test Coverage for Fragile Areas
+**Rationale:** Now that logic is documented and validated, lock it in with comprehensive tests.
+**Delivers:** Tests for payer logic, date parsing, report generation, phase checkpoints
+**Addresses:** All P1 test coverage requirements
+**Avoids:** "Tests that don't validate" and "payer edge cases" pitfalls
 
-3. **Phase 3 adds HL cohort verification** — confirm the 9,331 patients match the C81\*/201\* inclusion criteria at 2+ encounters. Uses CDM v6.1 (not v7.0).
+### Phase 4: Reproducibility & Onboarding
+**Rationale:** Pipeline is now trusted — make it reproducible by others.
+**Delivers:** Setup documentation, environment pinning, run instructions, Sphinx API docs
+**Addresses:** Setup/reproducibility docs, Sphinx generation, collaborator onboarding
+**Avoids:** "Setup docs that assume author's environment" pitfall
 
-4. **Phase 4 adds HL-specific validation** — ICD-9→ICD-10 partner exceptions (AMS, UMI), tumor registry NAACCR staging validation, HL-specific outcome code validation (from `concepts.py`), insurance variable completeness checks.
+### Phase 5: Regression & Polish
+**Rationale:** Final quality pass — automated regression tests, structured logging, DAG visualization.
+**Delivers:** Golden file regression tests, optional structured logging, pipeline DAG diagram
+**Addresses:** v1.x features (regression tests, logging, visualization)
 
-5. **Phase 5 adds partner harmonization** — flags for claims-only (FLM), death-only (VRT), ICD-mapped (AMS, UMI) partners. Extends HL-EDA dedup logic with flag columns instead of dropping records.
+### Phase Ordering Rationale
 
-6. **Phase 6 creates HL-specific derived variables** — age at first HL diagnosis, HL subtype from C81.x, diagnosis-to-treatment interval, payer at diagnosis, insurance continuity. All stratified by partner.
+- Documentation first because understanding drives everything else
+- Validation before tests because checkpoint failures reveal what to test
+- Tests before reproducibility because reproducibility is only valuable if outputs are trusted
+- Regression tests last because they need stable, validated outputs to compare against
 
-**Total estimated effort: 10.5–16 working days** (~2.5–3.5 weeks), down from 13–20 days in the generic roadmap.
+### Research Flags
 
----
+Phases likely needing deeper research during planning:
+- **Phase 2:** Pandera polars backend setup and schema definition patterns
+- **Phase 3:** Payer logic decision tree needs careful enumeration of all code combinations
+
+Phases with standard patterns (skip research-phase):
+- **Phase 1:** Docstring writing is mechanical; pipeline overview is domain knowledge
+- **Phase 4:** Setup docs follow standard patterns
+- **Phase 5:** Regression testing is well-documented
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack (Polars/DuckDB/Pandas) | **HIGH** | Multiple independent benchmarks agree; all tools verified on HiPerGator via conda |
-| SAS Date Conversion | **HIGH** | Official SAS documentation; community-verified formulas; magnitude-based detection is reliable |
-| PCORnet CDM Structure | **HIGH** | Official specification (v6.0/v7.0); OneFlorida+ confirmed as PCORnet CDM user |
-| Healthcare Cleaning Pipeline | **HIGH** | Based on PCORnet's own curation framework (Kahn et al.) and peer-reviewed literature |
-| HiPerGator Environment | **HIGH** | Official UF Research Computing documentation; storage/SLURM/conda details verified |
-| Pitfall Catalog | **HIGH** | Synthesized from multiple domain-specific sources; date pitfalls verified with concrete examples |
-| Parquet Performance Claims | **HIGH** | Verified across all tools (5-10x compression, 10-100x read speedup) |
-| OneFlorida+ Data Scale | **MEDIUM** | Published figures (~26M patients) but exact file sizes/counts for this delivery unknown |
-| HIPAA Storage Requirements | **MEDIUM** | Based on general UF policy; specific group storage paths and DUA terms need confirmation |
+| Stack | HIGH | Minimal additions to proven stack |
+| Features | HIGH | Based on codebase analysis and clinical data best practices |
+| Architecture | HIGH | Layering on existing architecture, not restructuring |
+| Pitfalls | HIGH | Derived from actual codebase concerns and clinical data patterns |
 
 **Overall confidence:** HIGH
 
-### Gaps Resolved by HL-EDA Analysis
+### Gaps to Address
 
-- **File inventory:** All 22 CSVs are known from `datastructure.txt`. File sizes will be confirmed in Phase 2.
-- **Date format:** SAS DATE9. strings confirmed (not integer dates). HL-EDA's `parse_sas_dates()` already handles this.
-- **CDM version:** v6.1, confirmed from DatasetCoverPage.
-- **HPC config:** SLURM account `erin.mobley-hl.bcu`, 64GB memory, 2hr time limit already tested in HL-EDA.
-- **SQL availability:** DuckDB via conda resolves this.
-
-### Remaining Gaps
-
-- **Chemotherapy regimen codes:** Need RXNORM_CUI or NDC lists for ABVD, BEACOPP, and other HL regimens if treatment-specific analysis is in scope.
-- **Study endpoints:** What specific insurance inequities are being measured? Time to treatment, treatment type, surveillance adherence, survival? This shapes Phase 6 derived variables.
-- **Insurance category mapping:** How to group PAYER_TYPE_PRIMARY into analytically useful categories (private, Medicaid, Medicare, uninsured, other).
-- **TUMOR_REGISTRY date formats:** May use NAACCR YYYYMMDD rather than SAS DATE9. — needs testing in Phase 2.
-
----
+- Pandera polars backend maturity: verify API stability for Polars lazy frames during Phase 2 planning
+- Exact scope of payer logic edge cases: enumerate during Phase 3 planning after documentation reveals full logic
 
 ## Sources
 
-### Primary (HIGH confidence)
-- Official UF Research Computing documentation (docs.rc.ufl.edu) — HiPerGator storage, SLURM, conda, modules
-- PCORnet CDM v7.0 Specification (pcornet.org) — Table schemas, value sets, data quality framework
-- OneFlorida+ Clinical Research Network (onefloridaconsortium.org) — Data model, scale, governance
-- SAS Official Documentation (support.sas.com) — Date/datetime value definitions, special missing values
-- DuckDB Official Blog and Documentation — CSV performance benchmarks, out-of-core architecture
-
-### Secondary (MEDIUM confidence)
-- Hocking 2024 benchmark — Fair R-vs-Python CSV reader comparison
-- Sean Ma 2024 — pandas PyArrow engine benchmarks
-- Kahn et al. 2016 (EGEMS) — Harmonized data quality framework
-- CMS CCW Medicare FFS Claims Codebook — Healthcare date field naming conventions
-- PharmaSUG 2024 — Healthcare data cleaning practices
-
-### Tertiary (needs validation at runtime)
-- Specific Polars/DuckDB behavior on HiPerGator's filesystem — should be verified during Phase 1 setup
-- OneFlorida+ small cell suppression threshold (< 11) — confirm with current DUA
-- Blue storage migration status (Nov 2025–Jan 2026) — confirm paths still valid
+- Codebase analysis (`.planning/codebase/` — 7 documents)
+- PCORnet CDM documentation standards
+- Python packaging and documentation standards (PEP 257, Sphinx)
+- HIPAA small-cell suppression guidance
+- Pandera documentation (Polars integration)
 
 ---
-*Research completed: 2026-02-27*
+*Research completed: 2026-03-17*
 *Ready for roadmap: yes*
