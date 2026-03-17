@@ -10,28 +10,28 @@ See: .planning/PROJECT.md (updated 2026-03-17)
 ## Current Position
 
 Phase: 1 of 4 (Documentation & Baseline)
-Plan: 0 of TBD in current phase
-Status: Ready to plan
-Last activity: 2026-03-17 — Roadmap created
+Plan: 1 of 5 in current phase (01-05 complete)
+Status: Executing
+Last activity: 2026-03-17 — Completed 01-05-PLAN.md (Golden Baseline Capture)
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██░░░░░░░░] 20%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 0
-- Average duration: N/A
-- Total execution time: 0.0 hours
+- Total plans completed: 1
+- Average duration: 3 minutes
+- Total execution time: 0.05 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| - | - | - | - |
+| 01-documentation-baseline | 1 | 3 min | 3 min |
 
 **Recent Trend:**
-- Last 5 plans: N/A
-- Trend: N/A (no data yet)
+- Last 5 plans: 01-05 (3 min)
+- Trend: Just started (need 5+ plans for trend analysis)
 
 *Updated after each plan completion*
 
@@ -46,6 +46,13 @@ Recent decisions affecting current work:
 - Document for collaborators + future self: Pipeline needs to be reproducible and maintainable by people who didn't write it
 - Systematic audit of unknowns: Author suspects problems they're unaware of; proactive review is more efficient than reactive debugging
 
+**From 01-05 (Golden Baseline Capture):**
+- SHA256 for checksums per NIST/HIPAA (not MD5/SHA1 which have collision vulnerabilities)
+- Manifest in git, actual data files gitignored (PHI protection)
+- Network/HPC path handling with graceful fallback to absolute paths
+- Priority-based output categorization (HIGH/MEDIUM/LOW) for regression focus
+- Support partial pipeline runs (missing directories skipped, empty manifest valid)
+
 ### Pending Todos
 
 None yet.
@@ -56,6 +63,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-17 (context gathering)
-Stopped at: Phase 1 context gathered
-Resume file: .planning/phases/01-documentation-baseline/01-CONTEXT.md
+Last session: 2026-03-17 (plan execution)
+Stopped at: Completed 01-05-PLAN.md (Golden Baseline Capture)
+Resume file: .planning/phases/01-documentation-baseline/01-05-SUMMARY.md
