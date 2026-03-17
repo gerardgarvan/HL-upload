@@ -131,3 +131,124 @@ def load_config(config_path: Path | None = None) -> Paths:
         parquet_dir=scratch_root / parquet_rel,
         derived_dir=derived_dir,
     )
+
+
+def validate_config(paths: Paths) -> None:
+    """Validate that all configured paths exist and are accessible.
+
+    Performs explicit filesystem checks on all paths in the Paths dataclass to
+    catch configuration errors at pipeline startup rather than mid-execution.
+    Input paths (data_root, datastructure, valuesets) must exist. Output paths
+    (scratch_root, parquet_dir, derived_dir) are created if missing.
+
+    On success, prints a structured validation summary showing all paths verified.
+    On failure, prints structured error message and raises ValueError with clear
+    guidance on which path failed and why.
+
+    **Design Decision: Plain pathlib validation, not Pydantic**
+    Research suggested Pydantic for path validation, but adding Pydantic as a
+    runtime dependency for 6 path checks is over-engineering. The existing
+    Paths dataclass + explicit pathlib checks provides the same validation
+    capability with zero new dependencies. Pydantic would be valuable if we
+    needed complex validation logic (regex patterns, custom validators, nested
+    models), but for "does this file exist?" checks, pathlib.exists() is
+    sufficient and more maintainable.
+
+    Args:
+        paths: Paths dataclass with resolved path configuration
+
+    Returns:
+        None (validation success indicated by lack of exception)
+
+    Raises:
+        ValueError: If any required path doesn't exist or is wrong type (file vs directory)
+
+    Example:
+        paths = load_config()
+        validate_config(paths)  # Raises ValueError if any path invalid
+        # Pipeline proceeds knowing all paths are valid...
+    """
+    errors = []
+
+    # Validate input paths (must exist)
+    if not paths.data_root.exists():
+        errors.append(f"data_root={paths.data_root} — Path does not exist")
+    elif not paths.data_root.is_dir():
+        errors.append(f"data_root={paths.data_root} — Path exists but is not a directory")
+
+    if not paths.datastructure_path.exists():
+        errors.append(f"datastructure_path={paths.datastructure_path} — File does not exist")
+    elif not paths.datastructure_path.is_file():
+        errors.append(f"datastructure_path={paths.datastructure_path} — Path exists but is not a file")
+
+    if not paths.valuesets_path.exists():
+        errors.append(f"valuesets_path={paths.valuesets_path} — File does not exist")
+    elif not paths.valuesets_path.is_file():
+        errors.append(f"valuesets_path={paths.valuesets_path} — Path exists but is not a file")
+
+    # Validate/create output paths (create if missing)
+    for output_path, field_name in [
+        (paths.scratch_root, "scratch_root"),
+        (paths.parquet_dir, "parquet_dir"),
+        (paths.derived_dir, "derived_dir"),
+    ]:
+        if not output_path.exists():
+            try:
+                output_path.mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                errors.append(f"{field_name}={output_path} — Failed to create directory: {e}")
+
+    # Report errors if any
+    if errors:
+        print("[CONFIG FAIL] Path validation errors:")
+        for error in errors:
+            print(f"  - {error}")
+        raise ValueError(f"Config validation failed with {len(errors)} error(s). See above for details.")
+
+    # Success - print validation summary
+    print("============================================================")
+    print("CONFIG VALIDATION PASSED")
+    print("============================================================")
+    print(f"  data_root:          {paths.data_root} [OK]")
+    print(f"  scratch_root:       {paths.scratch_root} [OK]")
+    print(f"  datastructure:      {paths.datastructure_path} [OK]")
+    print(f"  valuesets:          {paths.valuesets_path} [OK]")
+    print(f"  parquet_dir:        {paths.parquet_dir} [OK]")
+    print(f"  derived_dir:        {paths.derived_dir} [OK]")
+    print("============================================================")
+
+
+def load_and_validate_config(config_path: Path | None = None) -> Paths:
+    """Load configuration and validate all paths in a single call.
+
+    Convenience function that combines load_config() and validate_config() for
+    typical pipeline usage. This is the recommended entry point for pipeline
+    scripts that want fail-fast path validation at startup.
+
+    Equivalent to:
+        paths = load_config(config_path)
+        validate_config(paths)
+        return paths
+
+    Args:
+        config_path: Optional override path to config file. If None, defaults to
+            project_root/config/paths.toml
+
+    Returns:
+        Paths: Validated dataclass with all resolved absolute paths
+
+    Raises:
+        FileNotFoundError: If config file doesn't exist at expected location
+        KeyError: If required [paths] section or mandatory keys are missing from TOML
+        ValueError: If any required path doesn't exist or is wrong type
+
+    Example:
+        from src.load.config import load_and_validate_config
+
+        # Startup validation in pipeline script
+        paths = load_and_validate_config()
+        # Pipeline proceeds knowing config is valid...
+    """
+    paths = load_config(config_path)
+    validate_config(paths)
+    return paths

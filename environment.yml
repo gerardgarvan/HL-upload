@@ -27,3 +27,9 @@ dependencies:
     - pytest
     - ruff
     - pre-commit
+
+# Optional validation dependencies (not required for Phase 2 checkpoint validation)
+# Uncomment if Phase 3 requires deep value validation beyond plain Polars dtype checks:
+#   - pip:
+#     - pandera>=0.20  # Statistical profiling, value constraints, complex cross-column validation
+#     - pydantic>=2.0  # Complex config validation with custom validators (current pathlib checks sufficient)
