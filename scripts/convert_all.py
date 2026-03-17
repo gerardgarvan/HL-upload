@@ -20,9 +20,10 @@ import polars as pl
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.load.config import load_config
+from src.load.config import load_and_validate_config
 from src.load.convert import convert_table, write_inventory
 from src.load.schema import parse_datastructure, resolve_table_name
+from src.validate.checkpoint import validate_row_count, CheckpointError
 
 
 def main(config_path: Path | None = None) -> None:
@@ -54,7 +55,7 @@ def main(config_path: Path | None = None) -> None:
     print("HL DATA LOADING & CLEANING — CSV TO PARQUET CONVERSION")
     print("=" * 60)
 
-    paths = load_config(config_path)
+    paths = load_and_validate_config(config_path)
     print(f"\n  data_root:    {paths.data_root}")
     print(f"  scratch_root: {paths.scratch_root}")
     print(f"  parquet_dir:  {paths.parquet_dir}")
@@ -103,6 +104,20 @@ def main(config_path: Path | None = None) -> None:
         else:
             try:
                 record = convert_table(csv_path, paths.parquet_dir)
+
+                # Row count checkpoint: strict validation (Parquet rows must equal CSV rows)
+                if record["status"] not in ("empty", "skipped (up-to-date)"):
+                    validate_row_count(
+                        pl.read_parquet(parquet_path),
+                        phase="convert",
+                        table=table_name,
+                        expected=record["csv_rows"],
+                        tolerance=0.0,  # Strict: Parquet must have same rows as CSV
+                    )
+            except CheckpointError:
+                print(f"\n  [FATAL] {table_name} checkpoint failed — row count mismatch")
+                print("\n  Stopping — cannot continue after checkpoint failure.")
+                sys.exit(1)
             except Exception as exc:
                 print(f"\n  [FATAL] {table_name} failed: {exc}")
                 import traceback

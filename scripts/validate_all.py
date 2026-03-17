@@ -24,8 +24,10 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import polars as pl
 
-from src.load.config import load_config
+from src.load.config import load_and_validate_config
 from src.load.schema import parse_datastructure, resolve_table_name
+from src.validate.checkpoint import validate_schema, CheckpointError
+from src.validate.schemas import CRITICAL_SCHEMAS
 from src.validate.cohort import (
     build_cohort_summary_df,
     enrollment_crosscheck,
@@ -657,7 +659,7 @@ def main(config_path: Path | None = None) -> None:
     print("HL DATA LOADING & CLEANING — STRUCTURAL VALIDATION")
     print("=" * 60)
 
-    paths = load_config(config_path)
+    paths = load_and_validate_config(config_path)
     print(f"\n  data_root:    {paths.data_root}")
     print(f"  parquet_dir:  {paths.parquet_dir}")
 
@@ -715,6 +717,31 @@ def main(config_path: Path | None = None) -> None:
             print(f" — {'; '.join(result['details'])}")
         else:
             print()
+
+    # ----- Schema validation for critical tables (checkpoint) -----
+    print(f"\n{'─' * 60}")
+    print("  SCHEMA VALIDATION — CRITICAL TABLES")
+    print(f"{'─' * 60}")
+
+    for table_name, schema_def in CRITICAL_SCHEMAS.items():
+        pq_path = table_map.get(table_name)
+        if not pq_path or not pq_path.exists():
+            print(f"  [SCHEMA SKIP] {table_name}: not found in loaded tables")
+            continue
+
+        try:
+            df = pl.read_parquet(pq_path)
+            validate_schema(
+                df,
+                phase="validate",
+                table=table_name,
+                expected_columns=schema_def,
+            )
+        except CheckpointError as e:
+            print(f"\n  [FATAL] {table_name} schema checkpoint failed")
+            print(f"  {e}")
+            print("\n  Stopping — cannot continue after checkpoint failure.")
+            sys.exit(1)
 
     # ----- 2. Key integrity -----
     print(f"\n{'─' * 60}")
