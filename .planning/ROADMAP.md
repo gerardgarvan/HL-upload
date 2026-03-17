@@ -28,10 +28,14 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. All modules in `src/` have module-level docstrings explaining what the module does and how it fits in the pipeline
   3. `docs/PIPELINE.md` exists and describes the full data flow from raw CSV to final outputs, readable by a collaborator unfamiliar with the codebase
   4. Golden output files are captured for all pipeline phases (converted Parquet, cleaned tables, patient_level.parquet, quality reports, insurance summaries) enabling regression comparison
-**Plans**: TBD
+**Plans:** 5 plans
 
 Plans:
-- [ ] TBD during planning
+- [ ] 01-01-PLAN.md — Docstrings for src/load/, src/validate/, src/clean/validate/ (DOC-01, DOC-02)
+- [ ] 01-02-PLAN.md — Docstrings for src/clean/ core and src/report/ (DOC-01, DOC-02)
+- [ ] 01-03-PLAN.md — Docstrings for scripts/ and docs/AUDIT_LOG.md (DOC-01, DOC-02)
+- [ ] 01-04-PLAN.md — Pipeline overview document docs/PIPELINE.md (DOC-03)
+- [ ] 01-05-PLAN.md — Golden baseline capture script and manifest (BASE-01)
 
 ### Phase 2: Validation & Suppression Hardening
 **Goal**: Silent failures are caught at phase boundaries; HIPAA compliance is centralized and consistent
@@ -80,7 +84,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Documentation & Baseline | 0/TBD | Not started | - |
+| 1. Documentation & Baseline | 0/5 | Planned | - |
 | 2. Validation & Suppression Hardening | 0/TBD | Not started | - |
 | 3. Test Coverage for Fragile Areas | 0/TBD | Not started | - |
 | 4. Reproducibility & Onboarding | 0/TBD | Not started | - |
