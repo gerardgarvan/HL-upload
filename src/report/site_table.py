@@ -1,10 +1,28 @@
-# HL data loading & cleaning — site-stratified demographic table
-"""Build Age, Race, Ethnicity, Stage, Insurance table stratified by Site (SOURCE).
+"""Phase 7+: Reporting — site-level HL summary tables with cross-tabs and small-cell suppression.
 
-Each patient is assigned to their predominant SOURCE (site with most records).
-TMA and TMC are combined into TM.
-Age: AGE_AT_DIAGNOSIS from TUMOR_REGISTRY if available, else BIRTH_DATE + first HL DX.
-Insurance: first known PAYER_TYPE_PRIMARY from ENCOUNTER (chronologically).
+Builds per-site demographic and treatment summary tables stratified by SOURCE (data partner site).
+Each patient assigned to predominant site (most records). Supports HIPAA-compliant reporting
+with small-cell suppression (counts 1-10 flagged).
+
+**Pipeline position:** Phase 7+ (Reporting)
+**Input:** Cleaned tables (DIAGNOSIS, DEMOGRAPHIC, ENCOUNTER, TUMOR_REGISTRY, PROCEDURES)
+**Output:** Site-stratified summary DataFrames (Age × Site, Race × Site, Outcomes × Site, etc.)
+**Orchestrated by:** scripts/build_site_table.py
+
+**Key functions:**
+- _predominant_site_per_patient: Assigns each patient to site with most records (TMA+TMC→TM)
+- _build_age_by_site: Age at diagnosis × site cross-tab
+- _build_race_ethnicity_by_site: Race/ethnicity × site cross-tabs
+- _build_stage_by_site: Clinical stage × site cross-tab
+- _build_insurance_by_site: First known payer × site cross-tab
+- _build_outcomes_by_site: Treatment outcomes (CHEMO/RADIATION/SCT) × site cross-tabs
+
+**Site assignment:** Patients assigned to predominant SOURCE (site contributing most records).
+TMA and TMC collapsed to TM per stakeholder request.
+
+**Small-cell handling:** All cross-tabs use flag_small_cell() to mark counts 1-10 with "[!]"
+suffix for HIPAA compliance. Counts published without suppression in internal reports but
+must be suppressed (→ "-") in external/published reports.
 """
 
 from pathlib import Path

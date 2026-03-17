@@ -1,8 +1,20 @@
-# HL data loading & cleaning — quality report and derived variables
-"""DQ aggregation, patient-level derived variables, and cleaning decisions content.
+"""Phase 6: Assembly — patient-level derived variables and data quality reporting.
 
-Reuses _compute_hl_timeline pattern from validate_values, flag_small_cell from
-structural, and cohort/values constants. Produces structured data for Plan 02.
+Builds patient-level derived variables (age, HL subtype, treatment dates, payer, insurance
+continuity, region) and aggregates data quality metrics across completeness, conformance,
+plausibility, and persistence dimensions. Supports analysis-ready datasets and DQ reporting.
+
+**Pipeline position:** Phase 6 (Assembly)
+**Input:** Cleaned Parquet tables from Phase 5 (DIAGNOSIS, DEMOGRAPHIC, ENCOUNTER, etc.)
+**Output:** Patient-level derived DataFrame, DQ metric aggregations, cleaning decisions content
+**Orchestrated by:** scripts/assemble_clean.py, Plan 02 reporting
+
+**Key functions:**
+- build_patient_level_derived: Assembles one-row-per-patient with demographics, treatment,
+  payer, and HL subtype
+- aggregate_dq_metrics: Aggregates completeness, conformance, plausibility, persistence
+- generate_cleaning_decisions_content: Documents cleaning logic for CLEANING_DECISIONS.md
+- _suppress: HIPAA small-cell suppression (counts 1-10 → "-")
 """
 
 from pathlib import Path
@@ -33,6 +45,20 @@ from src.validate.values import (
 # Constants — HL subtype mapping (C81.x 4th character)
 # ---------------------------------------------------------------------------
 
+# ICD-10-CM HL subtype classification: C81.x uses 4th character to specify histologic subtype.
+# Clinical rationale: HL subtype affects prognosis and treatment — nodular sclerosis (most common,
+# ~70% of cases) vs other subtypes have different risk profiles and treatment response patterns.
+#
+# Mapping extracts 4th character from C81.x codes:
+# - 0: nodular lymphocyte predominant (rare, indolent)
+# - 1: nodular sclerosis (most common, young adults)
+# - 2: mixed cellularity (older adults, HIV-associated)
+# - 3: lymphocyte depleted (rare, aggressive)
+# - 4: lymphocyte rich (rare, favorable prognosis)
+# - 7: other specified HL subtypes
+# - 9: unspecified (subtype not documented or unknown)
+#
+# ICD-9 codes (201.x) do not have subtype specificity — labeled "Hodgkin lymphoma (ICD-9)".
 HL_SUBTYPE_MAP: dict[str, str] = {
     "0": "nodular lymphocyte predominant",
     "1": "nodular sclerosis",
@@ -43,6 +69,9 @@ HL_SUBTYPE_MAP: dict[str, str] = {
     "9": "Hodgkin lymphoma, unspecified",
 }
 
+# Southeast U.S. states: used for REGION variable (Southeast vs Other vs Unknown).
+# Clinical rationale: Geographic region may correlate with healthcare access, demographics,
+# and treatment patterns. Southeast region selected based on study protocol / stakeholder interest.
 SOUTHEAST_STATES: set[str] = {
     "AL",
     "AR",
@@ -58,6 +87,13 @@ SOUTHEAST_STATES: set[str] = {
     "WV",
 }
 
+# CPT codes for stem cell transplant (38xxx series) and radiation therapy (774xx series).
+# Clinical rationale: Treatment modality identification — SCT and radiation are major HL
+# treatments with different toxicity profiles and late effects. Used for first treatment
+# date calculation.
+#
+# TODO(audit): This constant includes radiation CPTs (774xx) but is named SCT_CPTS. Consider
+# renaming to TX_CPTS or splitting into SCT_CPTS and RADIATION_CPTS for clarity.
 SCT_CPTS: set[str] = {
     "38240",
     "38241",
@@ -73,7 +109,23 @@ SCT_CPTS: set[str] = {
 
 
 def _first_hl_dx_and_code(table_map: dict[str, Path]) -> tuple[pl.DataFrame, pl.DataFrame] | None:
-    """Get first HL DX date and HL code per patient. Returns (first_dx, diag_with_code) or None."""
+    """Get first HL diagnosis date and HL code per patient from DIAGNOSIS table.
+
+    Scans DIAGNOSIS for HL codes (ICD-9 201.x or ICD-10 C81.x), identifies earliest DX_DATE
+    per patient, and captures the HL code for subtype classification. Auto-detects whether
+    codes are dotted (C81.00) or normalized (C8100) format.
+
+    Clinical rationale: First HL diagnosis date is the cohort anchor point for age at diagnosis,
+    treatment timing, and survival analysis. HL code enables subtype stratification.
+
+    Args:
+        table_map: Dict mapping table names to Parquet file paths.
+
+    Returns:
+        Tuple of (first_dx DataFrame with PATID/FIRST_HL_DX_DATE/_HL_CODE,
+                  full diag DataFrame with all HL rows).
+        Returns None if DIAGNOSIS table unavailable or no HL codes found.
+    """
     diag_path = table_map.get("DIAGNOSIS")
     if not diag_path or not diag_path.exists():
         return None
@@ -369,11 +421,35 @@ def _hl_subtype_from_code(code: str) -> str:
 
 
 def build_patient_level_derived(table_map: dict[str, Path]) -> pl.DataFrame:
-    """Build one row per HL patient with derived variables.
+    """Build one-row-per-patient DataFrame with derived demographics and treatment variables.
 
-    Derived: AGE_AT_HL_DX, AGE_BAND, HL_SUBTYPE, FIRST_HL_DX_DATE, FIRST_HL_TX_DATE,
-    DX_TO_TX_DAYS, PAYER_AT_DX, INSURANCE_CONTINUITY, REGION.
-    Patients without FIRST_HL_DX_DATE are excluded.
+    Assembles patient-level variables from multiple tables: first HL diagnosis date and subtype
+    (DIAGNOSIS), first treatment date (PROCEDURES/PRESCRIBING/TUMOR_REGISTRY), age at diagnosis
+    (DEMOGRAPHIC), payer at diagnosis (ENCOUNTER), insurance continuity (ENROLLMENT), and
+    geographic region (LDS_ADDRESS_HISTORY).
+
+    **Derived variables:**
+    - FIRST_HL_DX_DATE: Earliest HL diagnosis date (cohort anchor)
+    - FIRST_HL_TX_DATE: Earliest treatment date (surgery/radiation/chemo from TR or SCT/RX)
+    - DX_TO_TX_DAYS: Days from diagnosis to first treatment (treatment delay metric)
+    - AGE_AT_HL_DX: Age in years at first HL diagnosis (BIRTH_DATE → FIRST_HL_DX_DATE)
+    - AGE_BAND: Age categories (<21, 21-39, 40-64, 65+); 65+ for masked BIRTH_DATE (1900-01-01)
+    - HL_SUBTYPE: Histologic subtype from ICD-10 4th character or "ICD-9" label
+    - PAYER_AT_DX: PAYER_TYPE_PRIMARY from encounter closest to FIRST_HL_DX_DATE within ±90 days
+    - INSURANCE_CONTINUITY: Binary flag (1=gap >30 days in enrollment during treatment window)
+    - REGION: Southeast vs Other vs Unknown (from ADDRESS_STATE)
+
+    **Exclusions:** Patients without FIRST_HL_DX_DATE are excluded from output (no HL diagnosis).
+
+    Clinical rationale: Patient-level derived variables enable stratified analysis (age groups,
+    subtypes, regions) and assess treatment access (DX_TO_TX_DAYS, insurance continuity).
+
+    Args:
+        table_map: Dict mapping table names to Parquet file paths.
+
+    Returns:
+        DataFrame with one row per HL patient (only patients with FIRST_HL_DX_DATE).
+        Returns empty DataFrame with schema if no HL patients found.
     """
     out = _first_hl_dx_and_code(table_map)
     if out is None:
@@ -485,7 +561,20 @@ def build_patient_level_derived(table_map: dict[str, Path]) -> pl.DataFrame:
 
 
 def _suppress(value: int) -> str:
-    """Return '-' for counts 1-10 (CSV publishable); otherwise str(value)."""
+    """Apply HIPAA small-cell suppression: return '-' for counts 1-10, otherwise str(value).
+
+    Suppresses small cell counts to prevent re-identification of individuals in published reports.
+    SMALL_CELL_THRESHOLD=10 per HIPAA Safe Harbor Method (counts ≤10 suppressed).
+
+    Clinical rationale: HIPAA compliance for publishable reports — small cell counts enable
+    individual identification. Dash ("-") indicates suppression in CSV/markdown outputs.
+
+    Args:
+        value: Count to potentially suppress.
+
+    Returns:
+        "-" if value in [1, 10], otherwise str(value).
+    """
     if 1 <= value <= SMALL_CELL_THRESHOLD:
         return "-"
     return str(value)
@@ -495,10 +584,30 @@ def aggregate_dq_metrics(
     table_map: dict[str, Path],
     reports_dir: Path,
 ) -> dict:
-    """Aggregate DQ metrics for completeness, conformance, plausibility, persistence.
+    """Aggregate data quality metrics across four Kahn Framework dimensions.
 
-    Returns dict with keys: completeness, conformance, plausibility, persistence.
-    Counts suitable for flag_small_cell when rendering to markdown.
+    Scans cleaned Parquet tables and aggregates DQ issues across:
+    - **Completeness:** Missing/null values per table/column/partner (from completeness CSV or Parquet)
+    - **Conformance:** Invalid code values (_val_*code flags: valueset violations, code concordance failures)
+    - **Plausibility:** Out-of-range values (_val_range, _val_future, temporal violations)
+    - **Persistence:** Encounter distribution over time (by year/month/partner for continuity assessment)
+
+    **Data sources:** Reads _val_* flag columns added during Phase 4 (Validation) and completeness
+    reports from reports_dir. Aggregates by summing flag columns (1=flagged row).
+
+    Clinical rationale: DQ metrics document pipeline-discovered issues and support data quality
+    reporting. Kahn Framework provides standardized DQ categorization for clinical data networks.
+
+    Args:
+        table_map: Dict mapping table names to Parquet file paths.
+        reports_dir: Path to reports directory (may contain completeness_by_partner.csv).
+
+    Returns:
+        Dict with keys:
+        - "completeness": {source: "csv"|"parquet", df: completeness data}
+        - "conformance": {invalid_counts: list of {table, check, count}}
+        - "plausibility": {flagged_counts: list of {table, check, count}}
+        - "persistence": {by_year/by_month: encounter counts, encounter_path: path}
     """
     result: dict = {
         "completeness": {},
