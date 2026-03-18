@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-03-17)
 
 **Core value:** Data correctness — if the output data is wrong, nothing else matters
-**Current focus:** Phase 4: Reproducibility & Onboarding
+**Current focus:** Phase 5: Insurance by Treatment Analysis
 
 ## Current Position
 
-Phase: 4 of 4 (Reproducibility & Onboarding)
-Plan: 2 of 2 in current phase
-Status: Complete
-Last activity: 2026-03-18 — Completed 04-02-PLAN.md (Onboarding Documentation)
+Phase: 5 of 5 (Insurance by Treatment Analysis)
+Plan: 1 of 2 in current phase
+Status: In Progress
+Last activity: 2026-03-18 — Completed 05-01-PLAN.md (Treatment-Stratified Insurance Analysis)
 
-Progress: [██████████] 100% (All phases complete)
+Progress: [████████████░░] 94% (16 of 17 plans complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 15
-- Average duration: 4.1 minutes
-- Total execution time: 1.02 hours
+- Total plans completed: 16
+- Average duration: 4.0 minutes
+- Total execution time: 1.07 hours
 
 **By Phase:**
 
@@ -31,10 +31,11 @@ Progress: [██████████] 100% (All phases complete)
 | 02-validation-suppression-hardening | 3 | 10 min | 3.3 min |
 | 03-test-coverage-fragile-areas | 6 | 21 min | 3.5 min |
 | 04-reproducibility-onboarding | 2 | 1.6 min | 0.8 min |
+| 05-insurance-by-treatment-analysis | 1 | 2 min | 2.0 min |
 
 **Recent Trend:**
-- Last 3 plans: 03-06 (6 min), 04-01 (1.4 min), 04-02 (10 sec)
-- Trend: Phase 4 complete - all reproducibility infrastructure and documentation in place
+- Last 3 plans: 04-01 (1.4 min), 04-02 (10 sec), 05-01 (2 min)
+- Trend: Phase 5 started - building treatment-stratified insurance analysis
 
 *Updated after each plan completion*
 
@@ -56,6 +57,7 @@ Progress: [██████████] 100% (All phases complete)
 | Phase 03-test-coverage-fragile-areas P06 | 6 | 3 tasks | 14 files |
 | Phase 04 P01 | 83 | 2 tasks | 2 files |
 | Phase 04 P02 | 10 | 2 tasks | 1 files |
+| Phase 05-insurance-by-treatment-analysis P01 | 2 min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -114,6 +116,10 @@ Recent decisions affecting current work:
 - [Phase 04-02]: Two-tier verification in documentation: quick spot-checks then golden baseline comparison
 - [Phase 04-02]: Full scope onboarding guide (pipeline + tests + reports) in single comprehensive SETUP.md
 - [Phase 04-02]: HyperGator-only documentation per user decision (no local dev instructions)
+- [Phase 05-01]: Graceful degradation for treatment columns — continue with available treatments, only exit if ALL missing
+- [Phase 05-01]: No small-cell suppression for insurance analysis tables — internal working tables show all counts as-is
+- [Phase 05-01]: Dual CSV structure (raw N/% + formatted N_Pct) enables both analysis and presentation use cases
+- [Phase 05-01]: Standard 9-category payer order with Self-pay label (not "No payment / Self-pay")
 
 ### Roadmap Evolution
 
@@ -129,6 +135,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-18 (context gathering)
-Stopped at: Phase 5 context gathered
-Resume file: .planning/phases/05-insurance-by-treatment-analysis/05-CONTEXT.md
+Last session: 2026-03-18 (plan execution)
+Stopped at: Completed 05-01-PLAN.md (Treatment-Stratified Insurance Analysis)
+Resume file: .planning/phases/05-insurance-by-treatment-analysis/05-01-SUMMARY.md
