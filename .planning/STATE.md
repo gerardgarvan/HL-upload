@@ -115,6 +115,10 @@ Recent decisions affecting current work:
 - [Phase 04-02]: Full scope onboarding guide (pipeline + tests + reports) in single comprehensive SETUP.md
 - [Phase 04-02]: HyperGator-only documentation per user decision (no local dev instructions)
 
+### Roadmap Evolution
+
+- Phase 5 added: Insurance by Treatment Analysis — summary tables of insurance coverage patterns by treatment type (chemo, radiation, SCT)
+
 ### Pending Todos
 
 None yet.
@@ -125,6 +129,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-18 (plan execution)
-Stopped at: Completed 04-02-PLAN.md (Phase 4 complete - all reproducibility infrastructure in place)
-Resume file: .planning/phases/04-reproducibility-onboarding/04-02-SUMMARY.md
+Last session: 2026-03-18 (context gathering)
+Stopped at: Phase 5 context gathered
+Resume file: .planning/phases/05-insurance-by-treatment-analysis/05-CONTEXT.md
