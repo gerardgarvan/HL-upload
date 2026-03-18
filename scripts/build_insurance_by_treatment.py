@@ -89,21 +89,18 @@ REQUIRED_COLUMNS = {
 }
 
 
-def _render_png(table_data: list[dict], title: str, output_path: Path) -> None:
+def _render_png(
+    table_data: list[dict], title: str, output_path: Path,
+    first_label: str = "First Treatment", last_label: str = "Last Treatment",
+) -> None:
     """Render summary table as PNG image with color-coded payer category rows.
 
     Args:
-        table_data: List of row dicts from _build_table() with keys:
-                    'Payer Category', '*Insurance (N)', '*Insurance (%)', '*Insurance (N_Pct)'
+        table_data: List of row dicts from _build_table()
         title: Title text with cohort name and size, e.g., "Chemotherapy Cohort (N=192)"
         output_path: Path to save PNG file
-
-    Creates a matplotlib table with:
-    - 9 rows (one per payer category)
-    - 4 columns: Payer Category, Primary Insurance, First Treatment, Last Treatment
-    - Color-coded rows using seaborn Pastel1 palette
-    - Dark blue header with white text
-    - 150 DPI, white background
+        first_label: Column header for first-treatment column (e.g., "First Chemo")
+        last_label: Column header for last-treatment column (e.g., "Last Chemo")
     """
     if not MATPLOTLIB_AVAILABLE:
         print(f"    [SKIPPED] {output_path.name} (matplotlib not available)")
@@ -117,8 +114,8 @@ def _render_png(table_data: list[dict], title: str, output_path: Path) -> None:
         payer_cat = row["Payer Category"]
         # Use N_Pct formatted strings for display
         primary = row["Primary Insurance (N_Pct)"]
-        first = row["First Treatment (N_Pct)"]
-        last = row["Last Treatment (N_Pct)"]
+        first = row[f"{first_label} (N_Pct)"]
+        last = row[f"{last_label} (N_Pct)"]
 
         cellText.append([payer_cat, primary, first, last])
 
@@ -130,7 +127,7 @@ def _render_png(table_data: list[dict], title: str, output_path: Path) -> None:
     fig, ax = plt.subplots(figsize=(12, 7))
     ax.axis('off')
 
-    col_labels = ["Payer Category", "Primary Insurance", "First Treatment", "Last Treatment"]
+    col_labels = ["Payer Category", "Primary Insurance", first_label, last_label]
 
     table = ax.table(
         cellText=cellText,
@@ -164,19 +161,18 @@ def _render_png(table_data: list[dict], title: str, output_path: Path) -> None:
     plt.close(fig)
 
 
-def _render_html(table_data: list[dict], title: str, output_path: Path) -> None:
+def _render_html(
+    table_data: list[dict], title: str, output_path: Path,
+    first_label: str = "First Treatment", last_label: str = "Last Treatment",
+) -> None:
     """Render summary table as styled HTML file with inline CSS.
 
     Args:
         table_data: List of row dicts from _build_table()
         title: Title text with cohort name and size
         output_path: Path to save HTML file
-
-    Creates self-contained HTML with:
-    - Inline CSS for table styling
-    - Color-coded rows matching PNG output
-    - Dark blue header with white text
-    - Generation timestamp footer
+        first_label: Column header for first-treatment column (e.g., "First Chemo")
+        last_label: Column header for last-treatment column (e.g., "Last Chemo")
     """
     # Generate CSS classes for payer categories
     css_classes = []
@@ -238,8 +234,8 @@ def _render_html(table_data: list[dict], title: str, output_path: Path) -> None:
         "      <tr>",
         "        <th>Payer Category</th>",
         "        <th>Primary Insurance</th>",
-        "        <th>First Treatment</th>",
-        "        <th>Last Treatment</th>",
+        f"        <th>{html.escape(first_label)}</th>",
+        f"        <th>{html.escape(last_label)}</th>",
         "      </tr>",
         "    </thead>",
         "    <tbody>",
@@ -250,8 +246,8 @@ def _render_html(table_data: list[dict], title: str, output_path: Path) -> None:
         payer_cat = row["Payer Category"]
         class_name = payer_cat.lower().replace(" ", "-")
         primary = html.escape(row["Primary Insurance (N_Pct)"])
-        first = html.escape(row["First Treatment (N_Pct)"])
-        last = html.escape(row["Last Treatment (N_Pct)"])
+        first = html.escape(row[f"{first_label} (N_Pct)"])
+        last = html.escape(row[f"{last_label} (N_Pct)"])
 
         html_lines.append(f'      <tr class="payer-{class_name}">')
         html_lines.append(f"        <td>{html.escape(payer_cat)}</td>")
@@ -296,6 +292,8 @@ def _build_table(
     first_col: str,
     last_col: str,
     cohort_label: str,
+    first_label: str = "First Treatment",
+    last_label: str = "Last Treatment",
 ) -> tuple[list[dict], int]:
     """Build treatment-stratified summary table with 9 payer rows and 3 columns.
 
@@ -305,6 +303,8 @@ def _build_table(
         first_col: Column name for insurance at first treatment
         last_col: Column name for insurance at last treatment
         cohort_label: Label for cohort (e.g., "Chemotherapy")
+        first_label: Column header for the first-treatment column (e.g., "First Chemo")
+        last_label: Column header for the last-treatment column (e.g., "Last Chemo")
 
     Returns:
         Tuple of (list of row dicts, cohort size)
@@ -318,13 +318,13 @@ def _build_table(
                 "Payer Category": cat,
                 "Primary Insurance (N)": 0,
                 "Primary Insurance (%)": 0.0,
-                "First Treatment (N)": 0,
-                "First Treatment (%)": 0.0,
-                "Last Treatment (N)": 0,
-                "Last Treatment (%)": 0.0,
+                f"{first_label} (N)": 0,
+                f"{first_label} (%)": 0.0,
+                f"{last_label} (N)": 0,
+                f"{last_label} (%)": 0.0,
                 "Primary Insurance (N_Pct)": "0 (0.0%)",
-                "First Treatment (N_Pct)": "0 (0.0%)",
-                "Last Treatment (N_Pct)": "0 (0.0%)",
+                f"{first_label} (N_Pct)": "0 (0.0%)",
+                f"{last_label} (N_Pct)": "0 (0.0%)",
             })
         return rows, cohort_size
 
@@ -360,13 +360,13 @@ def _build_table(
             "Payer Category": cat,
             "Primary Insurance (N)": n_primary,
             "Primary Insurance (%)": pct_primary,
-            "First Treatment (N)": n_first,
-            "First Treatment (%)": pct_first,
-            "Last Treatment (N)": n_last,
-            "Last Treatment (%)": pct_last,
+            f"{first_label} (N)": n_first,
+            f"{first_label} (%)": pct_first,
+            f"{last_label} (N)": n_last,
+            f"{last_label} (%)": pct_last,
             "Primary Insurance (N_Pct)": f"{n_primary} ({pct_primary:.1f}%)",
-            "First Treatment (N_Pct)": f"{n_first} ({pct_first:.1f}%)",
-            "Last Treatment (N_Pct)": f"{n_last} ({pct_last:.1f}%)",
+            f"{first_label} (N_Pct)": f"{n_first} ({pct_first:.1f}%)",
+            f"{last_label} (N_Pct)": f"{n_last} ({pct_last:.1f}%)",
         })
 
     return rows, cohort_size
@@ -431,6 +431,7 @@ def main(config_path: Path | None = None) -> None:
     print(f"\n  Available treatments: {', '.join(available_treatments)}")
 
     # Build tables for available treatments
+    # Each entry: (rows, cohort_size, first_label, last_label)
     tables = {}
 
     # Chemotherapy table
@@ -442,8 +443,10 @@ def main(config_path: Path | None = None) -> None:
             "PAYER_CATEGORY_AT_FIRST_CHEMO",
             "PAYER_CATEGORY_AT_LAST_CHEMO",
             "Chemotherapy",
+            first_label="First Chemo",
+            last_label="Last Chemo",
         )
-        tables["chemotherapy"] = (chemo_rows, chemo_size)
+        tables["chemotherapy"] = (chemo_rows, chemo_size, "First Chemo", "Last Chemo")
         print(f"\n  Chemotherapy cohort: N={chemo_size:,}")
 
     # Radiation table
@@ -455,8 +458,10 @@ def main(config_path: Path | None = None) -> None:
             "PAYER_CATEGORY_AT_FIRST_RADIATION",
             "PAYER_CATEGORY_AT_LAST_RADIATION",
             "Radiation",
+            first_label="First Radiation",
+            last_label="Last Radiation",
         )
-        tables["radiation"] = (radiation_rows, radiation_size)
+        tables["radiation"] = (radiation_rows, radiation_size, "First Radiation", "Last Radiation")
         print(f"  Radiation cohort: N={radiation_size:,}")
 
     # SCT table
@@ -468,27 +473,31 @@ def main(config_path: Path | None = None) -> None:
             "PAYER_CATEGORY_AT_FIRST_SCT",
             "PAYER_CATEGORY_AT_LAST_SCT",
             "SCT",
+            first_label="First SCT",
+            last_label="Last SCT",
         )
-        tables["sct"] = (sct_rows, sct_size)
+        tables["sct"] = (sct_rows, sct_size, "First SCT", "Last SCT")
         print(f"  SCT cohort: N={sct_size:,}")
 
     # Overview table (all enrolled patients)
-    # Use PAYER_CATEGORY_PRIMARY for all 3 columns
-    # If PAYER_CATEGORY_AT_FIRST_DX exists, use it for first column instead
+    # If PAYER_CATEGORY_AT_FIRST_DX exists, use it for first column
     first_dx_col = "PAYER_CATEGORY_AT_FIRST_DX" if "PAYER_CATEGORY_AT_FIRST_DX" in df.columns else "PAYER_CATEGORY_PRIMARY"
+    overview_first_label = "First Diagnosis" if "PAYER_CATEGORY_AT_FIRST_DX" in df.columns else "Primary Insurance"
     overview_rows, overview_size = _build_table(
         df,
         "PAYER_CATEGORY_PRIMARY",
         first_dx_col,
         "PAYER_CATEGORY_PRIMARY",
         "Overview",
+        first_label=overview_first_label,
+        last_label="Primary Insurance",
     )
-    tables["overview"] = (overview_rows, overview_size)
+    tables["overview"] = (overview_rows, overview_size, overview_first_label, "Primary Insurance")
     print(f"  Overview cohort (all enrolled): N={overview_size:,}")
 
     # Write CSV files and render PNG/HTML
     print("\n  Writing output files...")
-    for name, (rows, size) in tables.items():
+    for name, (rows, size, first_lbl, last_lbl) in tables.items():
         # CSV
         df_table = pl.DataFrame(rows)
         csv_path = reports_dir / f"{name}_table.csv"
@@ -508,13 +517,13 @@ def main(config_path: Path | None = None) -> None:
 
         png_title = f"{title_label} Cohort (N={size:,})"
         png_path = reports_dir / f"{name}_table.png"
-        _render_png(rows, png_title, png_path)
+        _render_png(rows, png_title, png_path, first_label=first_lbl, last_label=last_lbl)
         if MATPLOTLIB_AVAILABLE:
             print(f"    {name}_table.png")
 
         # HTML
         html_path = reports_dir / f"{name}_table.html"
-        _render_html(rows, png_title, html_path)
+        _render_html(rows, png_title, html_path, first_label=first_lbl, last_label=last_lbl)
         print(f"    {name}_table.html")
 
     # Write combined markdown README
@@ -527,8 +536,8 @@ def main(config_path: Path | None = None) -> None:
     md_lines.append("Summary tables of insurance coverage patterns stratified by treatment type.")
     md_lines.append("Each table shows payer category distributions at three timepoints:")
     md_lines.append("- Primary Insurance: Mode payer category across all encounters")
-    md_lines.append("- First Treatment: Payer category at first occurrence of treatment")
-    md_lines.append("- Last Treatment: Payer category at last occurrence of treatment")
+    md_lines.append("- First {Treatment}: Payer category at first occurrence of that treatment")
+    md_lines.append("- Last {Treatment}: Payer category at last occurrence of that treatment")
     md_lines.append("")
 
     # Add each table
@@ -543,19 +552,19 @@ def main(config_path: Path | None = None) -> None:
     for name in table_order:
         if name not in tables:
             continue
-        rows, size = tables[name]
+        rows, size, first_lbl, last_lbl = tables[name]
         label = table_labels[name]
 
         md_lines.append(f"## {label} Cohort (N={size:,})")
         md_lines.append("")
-        md_lines.append("| Payer Category | Primary Insurance | First Treatment | Last Treatment |")
-        md_lines.append("|----------------|-------------------|-----------------|----------------|")
+        md_lines.append(f"| Payer Category | Primary Insurance | {first_lbl} | {last_lbl} |")
+        md_lines.append("|----------------|-------------------|" + "-" * (len(first_lbl) + 2) + "|" + "-" * (len(last_lbl) + 2) + "|")
         for row in rows:
             md_lines.append(
                 f"| {row['Payer Category']} | "
                 f"{row['Primary Insurance (N_Pct)']} | "
-                f"{row['First Treatment (N_Pct)']} | "
-                f"{row['Last Treatment (N_Pct)']} |"
+                f"{row[f'{first_lbl} (N_Pct)']} | "
+                f"{row[f'{last_lbl} (N_Pct)']} |"
             )
         md_lines.append("")
 
