@@ -1,9 +1,11 @@
-# HL data loading & cleaning environment
-# Extends HL-EDA base env with Polars and DuckDB for CSV-to-Parquet pipeline
+# HL Data Pipeline - Conda Environment Specification
 #
-# DRAFT: This spec lists target packages. After installation on HPC, run:
-#   mamba env export --no-builds > environment.yml
-# to capture exact resolved versions.
+# This is the environment spec for the HL data loading and cleaning pipeline.
+# To set up the environment, run:
+#   conda env create -f environment.yml
+#
+# After environment creation, you can generate a lock file for exact reproduction:
+#   conda env export --no-builds > environment_lock.yml
 
 name: hl-eda
 
@@ -27,9 +29,3 @@ dependencies:
     - pytest
     - ruff
     - pre-commit
-
-# Optional validation dependencies (not required for Phase 2 checkpoint validation)
-# Uncomment if Phase 3 requires deep value validation beyond plain Polars dtype checks:
-#   - pip:
-#     - pandera>=0.20  # Statistical profiling, value constraints, complex cross-column validation
-#     - pydantic>=2.0  # Complex config validation with custom validators (current pathlib checks sufficient)
