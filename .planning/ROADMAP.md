@@ -12,9 +12,9 @@ This roadmap transforms an existing, functional clinical data pipeline into a tr
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [x] **Phase 1: Documentation & Baseline** - Understand and document the pipeline; capture golden outputs for regression protection (completed 2026-03-17)
-- [x] **Phase 2: Validation & Suppression Hardening** - Add checkpoints at phase boundaries; centralize HIPAA-compliant small-cell suppression (completed 2026-03-17)
-- [x] **Phase 3: Test Coverage for Fragile Areas** - Lock in correctness with comprehensive tests for payer logic, date parsing, and reports (completed 2026-03-17)
+- [x] **Phase 1: Documentation & Baseline** - Understand and document the pipeline; capture golden outputs for regression protection (completed 2026-03-17)
+- [x] **Phase 2: Validation & Suppression Hardening** - Add checkpoints at phase boundaries; centralize HIPAA-compliant small-cell suppression (completed 2026-03-17)
+- [x] **Phase 3: Test Coverage for Fragile Areas** - Lock in correctness with comprehensive tests for payer logic, date parsing, and reports (completed 2026-03-17)
 - [ ] **Phase 4: Reproducibility & Onboarding** - Enable collaborators to clone, configure, and run the pipeline
 
 ## Phase Details
@@ -79,10 +79,11 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. `docs/SETUP.md` exists with step-by-step instructions covering environment setup (conda/mamba), configuration file setup, file path mapping (orange/blue filesystems), and execution of the full pipeline
   2. A collaborator with HyperGator access can follow the setup guide and successfully run the pipeline from raw CSVs to final outputs without needing to ask the author questions
-**Plans**: TBD
+**Plans:** 2 plans in 2 waves
 
 Plans:
-- [ ] TBD during planning
+- [ ] 04-01-PLAN.md — Finalize environment.yml and create setup verification script (DOC-04)
+- [ ] 04-02-PLAN.md — Write comprehensive docs/SETUP.md onboarding guide (DOC-04)
 
 ## Progress
 
@@ -94,4 +95,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Documentation & Baseline | 5/5 | Complete    | 2026-03-17 |
 | 2. Validation & Suppression Hardening | 3/3 | Complete    | 2026-03-17 |
 | 3. Test Coverage for Fragile Areas | 0/6 | Complete    | 2026-03-17 |
-| 4. Reproducibility & Onboarding | 0/TBD | Not started | - |
+| 4. Reproducibility & Onboarding | 0/2 | Not started | - |
