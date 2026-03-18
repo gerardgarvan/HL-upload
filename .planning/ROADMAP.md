@@ -96,3 +96,19 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 2. Validation & Suppression Hardening | 3/3 | Complete    | 2026-03-17 |
 | 3. Test Coverage for Fragile Areas | 0/6 | Complete    | 2026-03-17 |
 | 4. Reproducibility & Onboarding | 0/2 | Not started | - |
+
+### Phase 5: Insurance by Treatment Analysis
+**Goal**: Presentation-ready summary tables of insurance coverage patterns stratified by treatment type (chemotherapy, radiation, SCT) with color-coded PNG, CSV/markdown, and styled HTML outputs
+**Depends on**: Phase 4
+**Requirements**: (none -- extends beyond v1 requirements; defined by CONTEXT.md decisions)
+**Success Criteria** (what must be TRUE):
+  1. New `scripts/build_insurance_by_treatment.py` replaces old insurance summary script with correct table structure
+  2. Four treatment-stratified tables (chemo, radiation, SCT, overview) each with 9 payer category rows and 3 columns (Primary, First treatment, Last treatment) in N (%) format
+  3. All tables output in 3 formats: color-coded PNG images, CSV + markdown, and styled HTML
+  4. No HIPAA small-cell suppression applied (internal/working tables)
+  5. Cohort sizes displayed in table headers
+**Plans:** 2 plans in 2 waves
+
+Plans:
+- [ ] 05-01-PLAN.md — Core data aggregation script with CSV and markdown output
+- [ ] 05-02-PLAN.md — PNG table rendering and styled HTML output with visual verification
