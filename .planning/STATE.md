@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-03-17)
 
 **Core value:** Data correctness — if the output data is wrong, nothing else matters
-**Current focus:** Phase 3: Test Coverage - Fragile Areas
+**Current focus:** Phase 4: Reproducibility & Onboarding
 
 ## Current Position
 
-Phase: 3 of 4 (Test Coverage - Fragile Areas)
-Plan: 6 of 6 in current phase
-Status: Phase Complete
-Last activity: 2026-03-17 — Completed 03-06-PLAN.md (Test Suite Organization & pytest Configuration)
+Phase: 4 of 4 (Reproducibility & Onboarding)
+Plan: 1 of 2 in current phase
+Status: In Progress
+Last activity: 2026-03-18 — Completed 04-01-PLAN.md (Environment Setup Infrastructure)
 
-Progress: [███████░░░] 55% (Phase 1-2 complete, Phase 3: 6/6 plans complete)
+Progress: [████████░░] 60% (Phase 1-3 complete, Phase 4: 1/2 plans complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 13
-- Average duration: 4.2 minutes
-- Total execution time: 0.96 hours
+- Total plans completed: 14
+- Average duration: 4.0 minutes
+- Total execution time: 1.02 hours
 
 **By Phase:**
 
@@ -30,10 +30,11 @@ Progress: [███████░░░] 55% (Phase 1-2 complete, Phase 3: 6/6
 | 01-documentation-baseline | 4 | 30 min | 7.5 min |
 | 02-validation-suppression-hardening | 3 | 10 min | 3.3 min |
 | 03-test-coverage-fragile-areas | 6 | 21 min | 3.5 min |
+| 04-reproducibility-onboarding | 1 | 1.4 min | 1.4 min |
 
 **Recent Trend:**
-- Last 3 plans: 03-04 (3 min), 03-05 (2 min), 03-06 (6 min)
-- Trend: Phase 3 complete - test infrastructure established with pytest configuration
+- Last 3 plans: 03-05 (2 min), 03-06 (6 min), 04-01 (1.4 min)
+- Trend: Phase 4 started - environment infrastructure complete, documentation next
 
 *Updated after each plan completion*
 
@@ -53,6 +54,7 @@ Progress: [███████░░░] 55% (Phase 1-2 complete, Phase 3: 6/6
 | Phase 03-test-coverage-fragile-areas P02 | 6 min | 2 tasks | 3 files |
 | Phase 03 P05 | 2 | 2 tasks | 2 files |
 | Phase 03-test-coverage-fragile-areas P06 | 6 | 3 tasks | 14 files |
+| Phase 04 P01 | 83 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -105,6 +107,8 @@ Recent decisions affecting current work:
 - [Phase 03-05]: Complete PCORnet factory fixture set: Added 4 tables (diagnosis, enrollment, vital, procedures) following same pattern for consistency
 - [Phase 03-test-coverage-fragile-areas]: Mirror src/ directory structure in tests/ for test discoverability
 - [Phase 03-test-coverage-fragile-areas]: Marker-based test organization (payer, dates, reports, checkpoint) for selective CI/CD execution
+- [Phase 04-01]: Two-file environment pattern: keep environment.yml human-editable with loose pins, generate lock file on-demand
+- [Phase 04-01]: Comprehensive verification: 6 automated checks covering conda env, Python version, imports, config, compute node, and data access
 
 ### Pending Todos
 
@@ -116,6 +120,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-17 (context gathering)
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-reproducibility-onboarding/04-CONTEXT.md
+Last session: 2026-03-18 (plan execution)
+Stopped at: Completed 04-01-PLAN.md
+Resume file: .planning/phases/04-reproducibility-onboarding/04-01-SUMMARY.md
