@@ -551,7 +551,7 @@ def main(config_path: Path | None = None) -> None:
 
     paths = load_and_validate_config(config_path)
     derived_dir = paths.derived_dir
-    clean_dir = paths.clean_dir
+    clean_dir = paths.parquet_dir
     reports_dir = PROJECT_ROOT / "reports" / "post_treatment_insurance"
     reports_dir.mkdir(parents=True, exist_ok=True)
 
