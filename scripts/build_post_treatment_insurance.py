@@ -606,8 +606,9 @@ def main(config_path: Path | None = None) -> None:
         for col in missing_flag_cols:
             df = df.with_columns(pl.lit(0).cast(pl.Int8).alias(col))
 
-    # Compute post-treatment payer
-    enc_path = clean_dir / "ENCOUNTER.parquet"
+    # Compute post-treatment payer — find ENCOUNTER parquet (may have suffix like _Mailhot_V1)
+    enc_candidates = sorted(clean_dir.glob("ENCOUNTER*.parquet"))
+    enc_path = enc_candidates[0] if enc_candidates else clean_dir / "ENCOUNTER.parquet"
     print("\n  Computing post-treatment payer...")
     result = _compute_post_treatment_payer(df, enc_path)
 
