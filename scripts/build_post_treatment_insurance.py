@@ -35,6 +35,17 @@ from src.report.encounter_payer_summary import (
 )
 from src.validate.structural import PATID_COL
 
+# Optional matplotlib imports for PNG rendering
+try:
+    import matplotlib
+    matplotlib.use('Agg')  # Non-interactive backend
+    import matplotlib.pyplot as plt
+    import matplotlib.colors
+    import seaborn as sns
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+
 # Standard payer category order (9 categories) - using "Self-pay" not "No payment / Self-pay"
 PAYER_CATEGORY_ORDER = [
     "Medicare",
@@ -47,6 +58,199 @@ PAYER_CATEGORY_ORDER = [
     "Unavailable",
     "Unknown",
 ]
+
+# Color palette for PNG and HTML rendering
+if MATPLOTLIB_AVAILABLE:
+    # Use seaborn Pastel1 palette for payer categories (same as Phase 5)
+    _palette = sns.color_palette("Pastel1", n_colors=9)
+    PAYER_COLORS = {
+        category: matplotlib.colors.to_hex(color)
+        for category, color in zip(PAYER_CATEGORY_ORDER, _palette)
+    }
+    # Add gray for N/A row in combined table (distinct from 9 payer colors)
+    PAYER_COLORS["N/A (No Treatment)"] = "#D3D3D3"
+    HEADER_COLOR = "#2C5AA0"  # Dark blue for headers (same as Phase 5)
+else:
+    PAYER_COLORS = {}
+    HEADER_COLOR = "#2C5AA0"
+
+
+def _render_png(table_data: list[dict], title: str, output_path: Path) -> None:
+    """Render post-treatment summary table as PNG image with color-coded payer category rows.
+
+    Single-column layout (2 columns total: Payer Category + Post-Treatment Insurance).
+    Uses same matplotlib/seaborn patterns as Phase 5 but with narrower figsize.
+
+    Args:
+        table_data: List of row dicts from _build_post_treatment_table()
+        title: Title text with cohort name and size, e.g., "Post-Treatment: Combined (N=XXX)"
+        output_path: Path to save PNG file
+    """
+    if not MATPLOTLIB_AVAILABLE:
+        print(f"    [SKIPPED] {output_path.name} (matplotlib not available)")
+        return
+
+    # Extract data for table rendering
+    cellText = []
+    cellColours = []
+
+    for row in table_data:
+        payer_cat = row["Payer Category"]
+        # Use N_Pct formatted string for display
+        post_treatment = row["Post-Treatment Insurance (N_Pct)"]
+
+        cellText.append([payer_cat, post_treatment])
+
+        # Both cells in this row get the same payer category color
+        row_color = PAYER_COLORS.get(payer_cat, "#FFFFFF")
+        cellColours.append([row_color, row_color])
+
+    # Create figure and table
+    # Single-column layout: figsize (8, 7) instead of Phase 5's (12, 7)
+    fig, ax = plt.subplots(figsize=(8, 7))
+    ax.axis('off')
+
+    col_labels = ["Payer Category", "Post-Treatment Insurance"]
+
+    table = ax.table(
+        cellText=cellText,
+        colLabels=col_labels,
+        cellColours=cellColours,
+        loc='center',
+        cellLoc='center'
+    )
+
+    # Style header cells (row 0)
+    for col_idx in range(len(col_labels)):
+        cell = table[(0, col_idx)]
+        cell.set_facecolor(HEADER_COLOR)
+        cell.set_text_props(weight='bold', color='white')
+
+    # Left-align first column (Payer Category)
+    for row_idx in range(len(table_data)):
+        cell = table[(row_idx + 1, 0)]  # +1 because row 0 is header
+        cell.set_text_props(ha='left')
+
+    # Font and scaling
+    table.auto_set_font_size(False)
+    table.set_fontsize(11)
+    table.scale(1.2, 2.0)
+
+    # Title
+    fig.suptitle(title, fontsize=14, fontweight='bold', y=0.95)
+
+    # Save
+    plt.savefig(output_path, dpi=150, bbox_inches='tight', facecolor='white')
+    plt.close(fig)
+
+
+def _render_html(table_data: list[dict], title: str, output_path: Path) -> None:
+    """Render post-treatment summary table as styled HTML file with inline CSS.
+
+    Single-column layout (2 columns total: Payer Category + Post-Treatment Insurance).
+    Uses same styling patterns as Phase 5 but adapted for single-column tables.
+
+    Args:
+        table_data: List of row dicts from _build_post_treatment_table()
+        title: Title text with cohort name and size
+        output_path: Path to save HTML file
+    """
+    # Generate CSS classes for payer categories
+    css_classes = []
+    for category in PAYER_CATEGORY_ORDER:
+        class_name = category.lower().replace(" ", "-")
+        color = PAYER_COLORS.get(category, "#FFFFFF")
+        css_classes.append(f"  .payer-{class_name} {{ background-color: {color}; }}")
+
+    # Add CSS for N/A row (sanitized class name)
+    css_classes.append(f"  .payer-na-no-treatment {{ background-color: #D3D3D3; }}")
+
+    css_block = "\n".join(css_classes)
+
+    # Build HTML
+    html_lines = [
+        "<!DOCTYPE html>",
+        "<html>",
+        "<head>",
+        '  <meta charset="UTF-8">',
+        "  <style>",
+        "    body {",
+        "      font-family: Arial, sans-serif;",
+        "      padding: 20px;",
+        "    }",
+        "    h2 {",
+        "      text-align: center;",
+        "      color: #333;",
+        "    }",
+        "    table {",
+        "      border-collapse: collapse;",
+        "      margin: 20px auto;",
+        "      box-shadow: 0 2px 4px rgba(0,0,0,0.1);",
+        "    }",
+        "    th {",
+        "      background-color: #2C5AA0;",
+        "      color: white;",
+        "      padding: 12px 16px;",
+        "      text-align: left;",
+        "      border: 1px solid #2C5AA0;",
+        "      font-weight: bold;",
+        "    }",
+        "    td {",
+        "      padding: 10px 16px;",
+        "      border: 1px solid #ddd;",
+        "    }",
+        "    tbody tr:hover {",
+        "      filter: brightness(0.95);",
+        "    }",
+        css_block,
+        "    .footer {",
+        "      text-align: center;",
+        "      margin-top: 20px;",
+        "      font-size: 12px;",
+        "      color: #666;",
+        "    }",
+        "  </style>",
+        "</head>",
+        "<body>",
+        f"  <h2>{html.escape(title)}</h2>",
+        "  <table>",
+        "    <thead>",
+        "      <tr>",
+        "        <th>Payer Category</th>",
+        "        <th>Post-Treatment Insurance</th>",
+        "      </tr>",
+        "    </thead>",
+        "    <tbody>",
+    ]
+
+    # Add data rows
+    for row in table_data:
+        payer_cat = row["Payer Category"]
+        # Sanitize class name for N/A row
+        if payer_cat == "N/A (No Treatment)":
+            class_name = "payer-na-no-treatment"
+        else:
+            class_name = payer_cat.lower().replace(" ", "-")
+        post_treatment = html.escape(row["Post-Treatment Insurance (N_Pct)"])
+
+        html_lines.append(f'      <tr class="{class_name}">')
+        html_lines.append(f"        <td>{html.escape(payer_cat)}</td>")
+        html_lines.append(f"        <td>{post_treatment}</td>")
+        html_lines.append("      </tr>")
+
+    # Footer
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    html_lines.extend([
+        "    </tbody>",
+        "  </table>",
+        '  <div class="footer">',
+        f"    Source: encounter_payer_summary.parquet | Generated: {timestamp}",
+        "  </div>",
+        "</body>",
+        "</html>",
+    ])
+
+    output_path.write_text("\n".join(html_lines), encoding="utf-8")
 
 
 def _compute_post_treatment_payer(
@@ -457,20 +661,52 @@ def main(config_path: Path | None = None) -> None:
     tables["sct"] = (sct_rows, sct_size)
     print(f"    SCT: N={sct_size:,}")
 
-    # Write CSV files
-    print("\n  Writing CSV files...")
-    csv_files = {
-        "combined": reports_dir / "combined_post_treatment.csv",
-        "chemo": reports_dir / "chemo_post_treatment.csv",
-        "radiation": reports_dir / "radiation_post_treatment.csv",
-        "sct": reports_dir / "sct_post_treatment.csv",
+    # Write CSV, PNG, and HTML files
+    print("\n  Writing output files...")
+    output_specs = {
+        "combined": {
+            "csv": reports_dir / "combined_post_treatment.csv",
+            "png": reports_dir / "combined_post_treatment.png",
+            "html": reports_dir / "combined_post_treatment.html",
+            "title": "Post-Treatment: Combined",
+        },
+        "chemo": {
+            "csv": reports_dir / "chemo_post_treatment.csv",
+            "png": reports_dir / "chemo_post_treatment.png",
+            "html": reports_dir / "chemo_post_treatment.html",
+            "title": "Post-Treatment: Chemotherapy Cohort",
+        },
+        "radiation": {
+            "csv": reports_dir / "radiation_post_treatment.csv",
+            "png": reports_dir / "radiation_post_treatment.png",
+            "html": reports_dir / "radiation_post_treatment.html",
+            "title": "Post-Treatment: Radiation Cohort",
+        },
+        "sct": {
+            "csv": reports_dir / "sct_post_treatment.csv",
+            "png": reports_dir / "sct_post_treatment.png",
+            "html": reports_dir / "sct_post_treatment.html",
+            "title": "Post-Treatment: Stem Cell Transplant (SCT) Cohort",
+        },
     }
 
-    for name, csv_path in csv_files.items():
+    for name, paths_and_title in output_specs.items():
         rows, size = tables[name]
+
+        # CSV
         df_table = pl.DataFrame(rows)
-        df_table.write_csv(csv_path)
-        print(f"    {csv_path.name}")
+        df_table.write_csv(paths_and_title["csv"])
+        print(f"    {paths_and_title['csv'].name}")
+
+        # PNG
+        png_title = f"{paths_and_title['title']} (N={size:,})"
+        _render_png(rows, png_title, paths_and_title["png"])
+        if MATPLOTLIB_AVAILABLE:
+            print(f"    {paths_and_title['png'].name}")
+
+        # HTML
+        _render_html(rows, png_title, paths_and_title["html"])
+        print(f"    {paths_and_title['html'].name}")
 
     # Write combined markdown README
     print("\n  Writing markdown README...")
