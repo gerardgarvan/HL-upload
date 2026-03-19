@@ -839,36 +839,54 @@ def build_encounter_payer_summary(table_map: dict[str, Path]) -> pl.DataFrame:
             pl.lit(None).cast(pl.String).alias("PAYER_CATEGORY_AT_LAST_SCT"),
         )
 
-    # Treatment flags: 1 if patient has at least one date for that treatment, else 0
+    # Treatment dates and flags: join date columns and derive HAD_* flags
     if chemo is not None:
         base = base.join(
-            chemo.select(PATID_COL).unique().with_columns(pl.lit(1).cast(pl.Int8).alias("HAD_CHEMO")),
+            chemo.select(PATID_COL, "FIRST_CHEMO_DATE", "LAST_CHEMO_DATE"),
             on=PATID_COL,
             how="left",
         )
+        base = base.with_columns(
+            pl.col("LAST_CHEMO_DATE").is_not_null().cast(pl.Int8).alias("HAD_CHEMO")
+        )
     else:
-        base = base.with_columns(pl.lit(0).cast(pl.Int8).alias("HAD_CHEMO"))
-    base = base.with_columns(pl.col("HAD_CHEMO").fill_null(0).cast(pl.Int8))
+        base = base.with_columns(
+            pl.lit(None).cast(pl.Date).alias("FIRST_CHEMO_DATE"),
+            pl.lit(None).cast(pl.Date).alias("LAST_CHEMO_DATE"),
+            pl.lit(0).cast(pl.Int8).alias("HAD_CHEMO"),
+        )
 
     if radiation is not None:
         base = base.join(
-            radiation.select(PATID_COL).unique().with_columns(pl.lit(1).cast(pl.Int8).alias("HAD_RADIATION")),
+            radiation.select(PATID_COL, "FIRST_RADIATION_DATE", "LAST_RADIATION_DATE"),
             on=PATID_COL,
             how="left",
         )
+        base = base.with_columns(
+            pl.col("LAST_RADIATION_DATE").is_not_null().cast(pl.Int8).alias("HAD_RADIATION")
+        )
     else:
-        base = base.with_columns(pl.lit(0).cast(pl.Int8).alias("HAD_RADIATION"))
-    base = base.with_columns(pl.col("HAD_RADIATION").fill_null(0).cast(pl.Int8))
+        base = base.with_columns(
+            pl.lit(None).cast(pl.Date).alias("FIRST_RADIATION_DATE"),
+            pl.lit(None).cast(pl.Date).alias("LAST_RADIATION_DATE"),
+            pl.lit(0).cast(pl.Int8).alias("HAD_RADIATION"),
+        )
 
     if sct is not None:
         base = base.join(
-            sct.select(PATID_COL).unique().with_columns(pl.lit(1).cast(pl.Int8).alias("HAD_SCT")),
+            sct.select(PATID_COL, "FIRST_SCT_DATE", "LAST_SCT_DATE"),
             on=PATID_COL,
             how="left",
         )
+        base = base.with_columns(
+            pl.col("LAST_SCT_DATE").is_not_null().cast(pl.Int8).alias("HAD_SCT")
+        )
     else:
-        base = base.with_columns(pl.lit(0).cast(pl.Int8).alias("HAD_SCT"))
-    base = base.with_columns(pl.col("HAD_SCT").fill_null(0).cast(pl.Int8))
+        base = base.with_columns(
+            pl.lit(None).cast(pl.Date).alias("FIRST_SCT_DATE"),
+            pl.lit(None).cast(pl.Date).alias("LAST_SCT_DATE"),
+            pl.lit(0).cast(pl.Int8).alias("HAD_SCT"),
+        )
 
     base = base.with_columns(pl.col("DUAL_ELIGIBLE").fill_null(0).cast(pl.Int8))
     return base.select(
@@ -887,6 +905,12 @@ def build_encounter_payer_summary(table_map: dict[str, Path]) -> pl.DataFrame:
         "PAYER_CATEGORY_AT_LAST_SCT",
         "PAYER_TRANSITION",
         "DUAL_ELIGIBLE",
+        "FIRST_CHEMO_DATE",
+        "LAST_CHEMO_DATE",
+        "FIRST_RADIATION_DATE",
+        "LAST_RADIATION_DATE",
+        "FIRST_SCT_DATE",
+        "LAST_SCT_DATE",
         "HAD_CHEMO",
         "HAD_RADIATION",
         "HAD_SCT",
