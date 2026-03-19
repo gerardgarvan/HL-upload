@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-03-17)
 
 **Core value:** Data correctness — if the output data is wrong, nothing else matters
-**Current focus:** Phase 5: Insurance by Treatment Analysis
+**Current focus:** Phase 6: Post-Treatment Insurance
 
 ## Current Position
 
-Phase: 5 of 5 (Insurance by Treatment Analysis)
+Phase: 6 of 6 (Post-Treatment Insurance)
 Plan: 1 of 2 in current phase
 Status: In Progress
-Last activity: 2026-03-18 — Completed 05-01-PLAN.md (Treatment-Stratified Insurance Analysis)
+Last activity: 2026-03-19 — Completed 06-01-PLAN.md (Post-Treatment Insurance Script)
 
-Progress: [████████████░░] 94% (16 of 17 plans complete)
+Progress: [████████████░░] 95% (17 of 18 plans complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 16
-- Average duration: 4.0 minutes
-- Total execution time: 1.07 hours
+- Total plans completed: 17
+- Average duration: 3.9 minutes
+- Total execution time: 1.12 hours
 
 **By Phase:**
 
@@ -32,10 +32,11 @@ Progress: [████████████░░] 94% (16 of 17 plans compl
 | 03-test-coverage-fragile-areas | 6 | 21 min | 3.5 min |
 | 04-reproducibility-onboarding | 2 | 1.6 min | 0.8 min |
 | 05-insurance-by-treatment-analysis | 1 | 2 min | 2.0 min |
+| 06-post-treatment-insurance-most-prevalent-payer-after-last-chemo-radiation-or-sct-date | 1 | 3 min | 3.0 min |
 
 **Recent Trend:**
-- Last 3 plans: 04-01 (1.4 min), 04-02 (10 sec), 05-01 (2 min)
-- Trend: Phase 5 started - building treatment-stratified insurance analysis
+- Last 3 plans: 04-02 (10 sec), 05-01 (2 min), 06-01 (3 min)
+- Trend: Phase 6 started - building post-treatment insurance analysis
 
 *Updated after each plan completion*
 
@@ -58,6 +59,8 @@ Progress: [████████████░░] 94% (16 of 17 plans compl
 | Phase 04 P01 | 83 | 2 tasks | 2 files |
 | Phase 04 P02 | 10 | 2 tasks | 1 files |
 | Phase 05-insurance-by-treatment-analysis P01 | 2 min | 2 tasks | 1 files |
+| Phase 06-post-treatment-insurance-most-prevalent-payer-after-last-chemo-radiation-or-sct-date P01 | 3 min | 2 tasks | 1 files |
+| Phase 06 P01 | 3 | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -120,10 +123,15 @@ Recent decisions affecting current work:
 - [Phase 05-01]: No small-cell suppression for insurance analysis tables — internal working tables show all counts as-is
 - [Phase 05-01]: Dual CSV structure (raw N/% + formatted N_Pct) enables both analysis and presentation use cases
 - [Phase 05-01]: Standard 9-category payer order with Self-pay label (not "No payment / Self-pay")
+- [Phase 06]: Post-treatment payer computed inline in script (not added to encounter_payer_summary.py) for single-use analysis
+- [Phase 06]: Self-pay label (not 'No payment / Self-pay') for consistency with Phase 5 tables
+- [Phase 06]: Post-treatment payer computed inline in script (not added to encounter_payer_summary.py) for single-use analysis
+- [Phase 06]: Self-pay label (not 'No payment / Self-pay') for consistency with Phase 5 tables
 
 ### Roadmap Evolution
 
 - Phase 5 added: Insurance by Treatment Analysis — summary tables of insurance coverage patterns by treatment type (chemo, radiation, SCT)
+- Phase 6 added: Post-Treatment Insurance — most prevalent payer after last chemo, radiation, or SCT date
 
 ### Pending Todos
 
@@ -135,6 +143,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-18 (plan execution)
-Stopped at: Completed 05-01-PLAN.md (Treatment-Stratified Insurance Analysis)
-Resume file: .planning/phases/05-insurance-by-treatment-analysis/05-01-SUMMARY.md
+Last session: 2026-03-19 (plan execution)
+Stopped at: Completed 06-01-PLAN.md
+Resume file: .planning/phases/06-post-treatment-insurance-most-prevalent-payer-after-last-chemo-radiation-or-sct-date/06-01-SUMMARY.md
