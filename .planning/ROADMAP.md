@@ -112,3 +112,20 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 Plans:
 - [ ] 05-01-PLAN.md — Core data aggregation script with CSV and markdown output
 - [ ] 05-02-PLAN.md — PNG table rendering and styled HTML output with visual verification
+
+### Phase 6: Post-Treatment Insurance: most prevalent payer after last chemo, radiation, or SCT date
+
+**Goal**: Standalone summary tables showing post-treatment insurance distributions derived from the mode payer category across encounters after each patient's last treatment date (max of last chemo, radiation, SCT dates)
+**Depends on:** Phase 5
+**Requirements**: (none -- extends beyond v1 requirements; defined by CONTEXT.md decisions)
+**Success Criteria** (what must be TRUE):
+  1. New `scripts/build_post_treatment_insurance.py` computes post-treatment payer as mode category from encounters after max(LAST_CHEMO_DATE, LAST_RADIATION_DATE, LAST_SCT_DATE)
+  2. Four standalone tables (combined, chemo cohort, radiation cohort, SCT cohort) each with single "Post-Treatment Insurance" column in N (%) format
+  3. Combined table includes N/A row for patients with no treatment; per-cohort tables have 9 payer rows
+  4. All tables output in 3 formats: color-coded PNG (matching Phase 5 style), CSV + markdown, and styled HTML
+  5. No HIPAA small-cell suppression applied (internal working tables)
+**Plans:** 2 plans in 2 waves
+
+Plans:
+- [ ] 06-01-PLAN.md — Core script with post-treatment payer computation and CSV/markdown output
+- [ ] 06-02-PLAN.md — PNG table rendering and styled HTML output with visual verification
