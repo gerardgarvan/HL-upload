@@ -129,3 +129,21 @@ Plans:
 Plans:
 - [ ] 06-01-PLAN.md — Core script with post-treatment payer computation and CSV/markdown output
 - [ ] 06-02-PLAN.md — PNG table rendering and styled HTML output with visual verification
+
+### Phase 7: present insurance tables in nice powerpoint
+
+**Goal:** Assemble the insurance summary tables from Phases 5 and 6 into a polished, UF-branded PowerPoint presentation using python-pptx
+**Depends on:** Phase 6
+**Requirements:** (none -- extends beyond v1 requirements; defined by CONTEXT.md decisions)
+**Success Criteria** (what must be TRUE):
+  1. New `scripts/build_insurance_presentation.py` creates a PowerPoint from Phase 5/6 CSV data
+  2. Title slide with presentation title and cohort sizes (total N, chemo N, radiation N, SCT N)
+  3. 8 table slides: overview + combined post-treatment, then chemo pair, radiation pair, SCT pair — grouped by treatment type
+  4. Native PowerPoint tables with UF Health branding (blue #003087, orange #FA4616), not embedded PNG images
+  5. Each table slide has descriptive title and subtitle with cohort size (N=X)
+  6. Output saved to reports/insurance_tables_YYYY-MM-DD.pptx (date-stamped)
+  7. Script re-runnable — reads from reports/ CSVs, produces .pptx anytime
+**Plans:** 1 plan in 1 wave
+
+Plans:
+- [ ] 07-01-PLAN.md — Build UF-branded PowerPoint presentation from Phase 5/6 insurance CSVs
