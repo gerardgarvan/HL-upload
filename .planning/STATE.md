@@ -132,6 +132,7 @@ Recent decisions affecting current work:
 
 - Phase 5 added: Insurance by Treatment Analysis — summary tables of insurance coverage patterns by treatment type (chemo, radiation, SCT)
 - Phase 6 added: Post-Treatment Insurance — most prevalent payer after last chemo, radiation, or SCT date
+- Phase 7 added: Present insurance tables in nice PowerPoint
 
 ### Pending Todos
 
@@ -143,6 +144,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-19 (plan execution)
-Stopped at: Completed 06-01-PLAN.md
-Resume file: .planning/phases/06-post-treatment-insurance-most-prevalent-payer-after-last-chemo-radiation-or-sct-date/06-01-SUMMARY.md
+Last session: 2026-03-20 (discuss-phase)
+Stopped at: Phase 7 context gathered
+Resume file: .planning/phases/07-present-insurance-tables-in-nice-powerpoint/07-CONTEXT.md
