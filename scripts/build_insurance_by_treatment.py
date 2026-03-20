@@ -272,18 +272,21 @@ def _render_html(
 
 
 def _normalize_payer(s: pl.Series) -> pl.Series:
-    """Replace null and empty string payer values with 'Unknown' for consistent reporting.
+    """Replace null and empty string payer values with 'Unknown', and normalize Self-pay.
 
     Args:
         s: Polars Series of payer category strings (may contain nulls or empty strings)
 
     Returns:
-        Series with nulls and empty strings replaced by "Unknown", dtype pl.String
+        Series with nulls/empty → "Unknown", "No payment / Self-pay" → "Self-pay", dtype pl.String
     """
-    return pl.Series(
-        [("Unknown" if (v is None or v == "") else v) for v in s],
-        dtype=pl.String,
-    )
+    def _norm(v):
+        if v is None or v == "":
+            return "Unknown"
+        if v == "No payment / Self-pay":
+            return "Self-pay"
+        return v
+    return pl.Series([_norm(v) for v in s], dtype=pl.String)
 
 
 def _build_table(

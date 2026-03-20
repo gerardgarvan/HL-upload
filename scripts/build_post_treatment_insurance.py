@@ -485,9 +485,14 @@ def _build_post_treatment_table(
             )
         return rows, cohort_size
 
-    # Normalize nulls to "Unknown"
+    # Normalize nulls to "Unknown" and "No payment / Self-pay" to "Self-pay"
     df_norm = df.with_columns(
-        pl.col(col_name).fill_null("Unknown").alias("_payer_norm")
+        pl.when(pl.col(col_name).is_null() | (pl.col(col_name) == ""))
+        .then(pl.lit("Unknown"))
+        .when(pl.col(col_name) == "No payment / Self-pay")
+        .then(pl.lit("Self-pay"))
+        .otherwise(pl.col(col_name))
+        .alias("_payer_norm")
     )
 
     # Count by category
