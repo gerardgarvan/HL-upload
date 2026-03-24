@@ -329,7 +329,7 @@ def _build_unknown_encounter_breakdown(
 
     # Filter encounters to Unknown patients
     enc_filtered = enc.filter(
-        pl.col("ID").is_in(unknown_patients["ID"])
+        pl.col("ID").is_in(unknown_patients["ID"].implode())
     )
 
     # Join to get LAST_TREATMENT_DATE
@@ -412,7 +412,7 @@ def _compute_post_treatment_payer(
 
     # Filter to patients in enc_payer_summary
     enc_filtered = enc.filter(
-        pl.col("ID").is_in(enc_payer_summary["ID"])
+        pl.col("ID").is_in(enc_payer_summary["ID"].implode())
     )
 
     # Join to get LAST_TREATMENT_DATE
