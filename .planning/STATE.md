@@ -1,3 +1,19 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: completed
+stopped_at: Phase 8 context gathered
+last_updated: "2026-03-24T16:35:19.150Z"
+last_activity: 2026-03-20 — Completed 07-01-PLAN.md (PowerPoint Generation Script)
+progress:
+  total_phases: 8
+  completed_phases: 5
+  total_plans: 21
+  completed_plans: 19
+  percent: 100
+---
+
 # Project State
 
 ## Project Reference
@@ -19,6 +35,7 @@ Progress: [█████████████░] 100% (18 of 18 plans comp
 ## Performance Metrics
 
 **Velocity:**
+
 - Total plans completed: 18
 - Average duration: 4.0 minutes
 - Total execution time: 1.22 hours
@@ -36,6 +53,7 @@ Progress: [█████████████░] 100% (18 of 18 plans comp
 | 07-present-insurance-tables-in-nice-powerpoint | 1 | 6 min | 6.0 min |
 
 **Recent Trend:**
+
 - Last 3 plans: 05-01 (2 min), 06-01 (3 min), 07-01 (6 min)
 - Trend: All phases complete - presentation layer finalized
 
@@ -76,6 +94,7 @@ Recent decisions affecting current work:
 - Systematic audit of unknowns: Author suspects problems they're unaware of; proactive review is more efficient than reactive debugging
 
 **From 01-05 (Golden Baseline Capture):**
+
 - SHA256 for checksums per NIST/HIPAA (not MD5/SHA1 which have collision vulnerabilities)
 - Manifest in git, actual data files gitignored (PHI protection)
 - Network/HPC path handling with graceful fallback to absolute paths
@@ -140,6 +159,7 @@ Recent decisions affecting current work:
 - Phase 5 added: Insurance by Treatment Analysis — summary tables of insurance coverage patterns by treatment type (chemo, radiation, SCT)
 - Phase 6 added: Post-Treatment Insurance — most prevalent payer after last chemo, radiation, or SCT date
 - Phase 7 added: Present insurance tables in nice PowerPoint
+- Phase 8 added: Insurance in treatment windows — comparison of patients whose ENR dates were within the timeframe vs those that weren't
 
 ### Pending Todos
 
@@ -151,6 +171,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-20 (execute-phase)
-Stopped at: Completed 07-01-PLAN.md (PowerPoint Generation Script) - All phases complete
-Resume file: .planning/phases/07-present-insurance-tables-in-nice-powerpoint/07-01-SUMMARY.md
+Last session: 2026-03-24T16:35:19.146Z
+Stopped at: Phase 8 context gathered
+Resume file: .planning/phases/08-look-at-insurance-in-treatment-windows-but-do-a-comparison-of-people-whose-enr-dates-where-within-the-timeframe-vs-those-that-weren-t/08-CONTEXT.md
