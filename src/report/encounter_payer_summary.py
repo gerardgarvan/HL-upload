@@ -944,6 +944,17 @@ def build_encounter_payer_summary(table_map: dict[str, Path]) -> pl.DataFrame:
         )
 
     # Treatment dates and flags: join date columns and derive HAD_* flags
+    if first_dx is not None:
+        base = base.join(
+            first_dx.select(PATID_COL, "FIRST_HL_DX_DATE"),
+            on=PATID_COL,
+            how="left",
+        )
+    else:
+        base = base.with_columns(
+            pl.lit(None).cast(pl.Date).alias("FIRST_HL_DX_DATE"),
+        )
+
     if chemo is not None:
         base = base.join(
             chemo.select(PATID_COL, "FIRST_CHEMO_DATE", "LAST_CHEMO_DATE"),
@@ -1000,6 +1011,7 @@ def build_encounter_payer_summary(table_map: dict[str, Path]) -> pl.DataFrame:
         "N_DISTINCT_PAYER_CATEGORIES",
         "PAYER_CATEGORY_PRIMARY",
         "PAYER_CATEGORY_AT_FIRST_DX",
+        "FIRST_HL_DX_DATE",
         "PAYER_CATEGORY_AT_FIRST_CHEMO",
         "PAYER_CATEGORY_AT_LAST_CHEMO",
         "PAYER_CATEGORY_MOST_FREQUENT_AT_CHEMO",
