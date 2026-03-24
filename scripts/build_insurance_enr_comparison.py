@@ -437,12 +437,18 @@ def _compute_post_treatment_payer(
         pl.col("ADMIT_DATE") > pl.col("LAST_TREATMENT_DATE")
     )
 
-    # Apply payer category mapping
+    # Apply payer category mapping (row-level Python function, not a Polars expr)
     post_tx_enc = post_tx_enc.with_columns(
-        _payer_category_from_effective_and_dual(
-            pl.col("effective_payer"),
-            pl.col("dual_eligible")
-        ).alias("_payer_category")
+        pl.Series(
+            "_payer_category",
+            [
+                _payer_category_from_effective_and_dual(
+                    r["effective_payer"], r.get("dual_eligible", 0) or 0
+                )
+                for r in post_tx_enc.iter_rows(named=True)
+            ],
+            dtype=pl.String,
+        )
     )
 
     # Compute mode payer category per patient (most frequent)
