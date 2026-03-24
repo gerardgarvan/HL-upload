@@ -191,25 +191,68 @@ def _valid_payer_expr(col: str) -> pl.Expr:
 
 
 def _get_first_hl_dx_dates(table_map: dict[str, Path], ids: pl.Series) -> pl.DataFrame | None:
-    """First HL diagnosis date per patient. Returns None if no DIAGNOSIS/HL data."""
+    """First HL diagnosis date per patient from DIAGNOSIS and tumor registry diagnosis dates.
+
+    DIAGNOSIS contribution: earliest HL-coded DX_DATE.
+    Tumor registry contribution: earliest DATE_OF_DIAGNOSIS across TUMOR_REGISTRY1/2/3.
+    Final FIRST_HL_DX_DATE is the minimum of available sources per patient.
+    """
+    dx_frames: list[pl.DataFrame] = []
+
     diag_path = table_map.get("DIAGNOSIS")
-    if not diag_path or not diag_path.exists():
+    if diag_path and diag_path.exists():
+        dx_format = detect_dx_format(diag_path)
+        code_set = ALL_HL_CODES if dx_format == "dotted" else ALL_HL_NORMALIZED
+        dx_match = pl.col("DX") if dx_format == "dotted" else pl.col("DX").str.to_uppercase().str.replace_all(r"\.", "")
+        diag = (
+            pl.scan_parquet(diag_path)
+            .with_columns(pl.col(PATID_COL).cast(pl.String))
+            .filter(pl.col(PATID_COL).is_in(ids.implode()))
+            .with_columns(dx_match.alias("_DX_MATCH"))
+            .filter(pl.col("_DX_MATCH").is_in(code_set))
+            .filter(pl.col("DX_DATE").is_not_null())
+            .select(PATID_COL, pl.col("DX_DATE").alias("_dx_d"))
+            .collect()
+        )
+        if not diag.is_empty():
+            dx_frames.append(diag)
+
+    for tr_name in sorted(TUMOR_REGISTRY_TABLES):
+        tr_path = table_map.get(tr_name)
+        if not tr_path or not tr_path.exists():
+            continue
+        schema = pl.read_parquet_schema(tr_path)
+        if "DATE_OF_DIAGNOSIS" not in schema.names():
+            continue
+        tr = (
+            pl.scan_parquet(tr_path)
+            .with_columns(pl.col(PATID_COL).cast(pl.String))
+            .filter(pl.col(PATID_COL).is_in(ids.implode()))
+            .select(PATID_COL, "DATE_OF_DIAGNOSIS")
+            .collect()
+        )
+        if tr.is_empty():
+            continue
+        col = "DATE_OF_DIAGNOSIS"
+        if tr[col].dtype in (pl.String, pl.Utf8):
+            tr = tr.with_columns(
+                pl.col(col)
+                .str.to_date("%Y.%m.%d", strict=False)
+                .fill_null(pl.col(col).str.to_date("%m/%d/%Y", strict=False))
+                .fill_null(pl.col(col).str.to_date("%d%b%Y", strict=False))
+                .fill_null(pl.col(col).str.to_date("%Y%m%d", strict=False))
+                .alias("_dx_d")
+            )
+        else:
+            tr = tr.with_columns(pl.col(col).alias("_dx_d"))
+        tr_dx = tr.filter(pl.col("_dx_d").is_not_null()).select(PATID_COL, "_dx_d")
+        if not tr_dx.is_empty():
+            dx_frames.append(tr_dx)
+
+    if not dx_frames:
         return None
-    dx_format = detect_dx_format(diag_path)
-    code_set = ALL_HL_CODES if dx_format == "dotted" else ALL_HL_NORMALIZED
-    dx_match = pl.col("DX") if dx_format == "dotted" else pl.col("DX").str.to_uppercase().str.replace_all(r"\.", "")
-    diag = (
-        pl.scan_parquet(diag_path)
-        .with_columns(pl.col(PATID_COL).cast(pl.String))
-        .filter(pl.col(PATID_COL).is_in(ids.implode()))
-        .with_columns(dx_match.alias("_DX_MATCH"))
-        .filter(pl.col("_DX_MATCH").is_in(code_set))
-        .filter(pl.col("DX_DATE").is_not_null())
-        .group_by(PATID_COL)
-        .agg(pl.col("DX_DATE").min().alias("FIRST_HL_DX_DATE"))
-        .collect()
-    )
-    return diag if not diag.is_empty() else None
+    all_dx = pl.concat(dx_frames)
+    return all_dx.group_by(PATID_COL).agg(pl.col("_dx_d").min().alias("FIRST_HL_DX_DATE"))
 
 
 def _get_chemo_dates(table_map: dict[str, Path], ids: pl.Series) -> pl.DataFrame | None:
