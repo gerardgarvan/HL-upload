@@ -407,19 +407,29 @@ def _compute_post_treatment_payer(
         .alias("LAST_TREATMENT_DATE")
     )
 
-    # Read encounters
-    enc = pl.read_parquet(enc_path)
+    # Read encounters — check schema for available columns
+    enc_schema = pl.read_parquet_schema(enc_path)
+    has_secondary = "PAYER_TYPE_SECONDARY" in enc_schema.names()
+    enc_cols = ["ID", "ADMIT_DATE", "PAYER_TYPE_PRIMARY"]
+    if has_secondary:
+        enc_cols.append("PAYER_TYPE_SECONDARY")
 
-    # Filter to patients in enc_payer_summary
-    enc_filtered = enc.filter(
-        pl.col("ID").is_in(enc_payer_summary["ID"].implode())
+    eff_expr, valid_expr, dual_expr = _effective_payer_and_dual_exprs(has_secondary)
+
+    # Load and filter encounters to patients in summary
+    enc = (
+        pl.scan_parquet(enc_path)
+        .with_columns(pl.col("ID").cast(pl.String))
+        .filter(pl.col("ID").is_in(enc_payer_summary["ID"].implode()))
+        .select(enc_cols)
+        .with_columns([eff_expr, valid_expr, dual_expr])
+        .select("ID", "ADMIT_DATE", "effective_payer", "dual_eligible")
+        .collect()
     )
 
     # Join to get LAST_TREATMENT_DATE
     joined = enc_payer_summary.select("ID", "LAST_TREATMENT_DATE").join(
-        enc_filtered.select("ID", "ADMIT_DATE", "PAYER_TYPE_PRIMARY", "PAYER_TYPE_SECONDARY"),
-        on="ID",
-        how="left"
+        enc, on="ID", how="left"
     )
 
     # Filter to post-treatment encounters
@@ -427,19 +437,11 @@ def _compute_post_treatment_payer(
         pl.col("ADMIT_DATE") > pl.col("LAST_TREATMENT_DATE")
     )
 
-    # Compute effective payer and category (same as encounter_payer_summary logic)
-    effective_payer_expr, dual_eligible_expr = _effective_payer_and_dual_exprs()
-
-    post_tx_enc = post_tx_enc.with_columns([
-        effective_payer_expr.alias("_effective_payer"),
-        dual_eligible_expr.alias("_dual_eligible"),
-    ])
-
     # Apply payer category mapping
     post_tx_enc = post_tx_enc.with_columns(
         _payer_category_from_effective_and_dual(
-            pl.col("_effective_payer"),
-            pl.col("_dual_eligible")
+            pl.col("effective_payer"),
+            pl.col("dual_eligible")
         ).alias("_payer_category")
     )
 
