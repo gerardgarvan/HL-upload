@@ -1,7 +1,7 @@
-"""Build UF-branded PowerPoint presentation from insurance summary tables (Phase 7).
+"""Build UF-branded PowerPoint presentation from insurance summary tables (Phase 7+8).
 
-Reads Phase 5 and Phase 6 CSV outputs, produces:
-- reports/insurance_tables_YYYY-MM-DD.pptx (9-slide PowerPoint presentation)
+Reads Phase 5, Phase 6, and Phase 8 CSV outputs, produces:
+- reports/insurance_tables_YYYY-MM-DD.pptx (14-slide PowerPoint presentation)
 
 Presentation structure:
 - Slide 1: Title slide with cohort sizes
@@ -13,6 +13,11 @@ Presentation structure:
 - Slide 7: Radiation post-treatment (Phase 6)
 - Slide 8: SCT insurance (Phase 5)
 - Slide 9: SCT post-treatment (Phase 6)
+- Slide 10: DX enrollment comparison (Phase 8)
+- Slide 11: Chemotherapy enrollment comparison (Phase 8)
+- Slide 12: Radiation enrollment comparison (Phase 8)
+- Slide 13: SCT enrollment comparison (Phase 8)
+- Slide 14: Unknown post-treatment encounter breakdown (Phase 8)
 
 All tables use UF Health branding (blue #003087, orange #FA4616) with native
 PowerPoint tables (not embedded images) for editability.
@@ -327,9 +332,18 @@ def main(config_path: str | None = None) -> None:
     radiation_post_path = phase6_dir / "radiation_post_treatment.csv"
     sct_post_path = phase6_dir / "sct_post_treatment.csv"
 
+    # Phase 8 CSV files (5 tables)
+    phase8_dir = PROJECT_ROOT / "reports" / "insurance_enr_comparison"
+    dx_enr_path = phase8_dir / "dx_enr_comparison.csv"
+    chemo_enr_path = phase8_dir / "chemo_enr_comparison.csv"
+    radiation_enr_path = phase8_dir / "radiation_enr_comparison.csv"
+    sct_enr_path = phase8_dir / "sct_enr_comparison.csv"
+    unknown_breakdown_path = phase8_dir / "unknown_post_tx_encounter_breakdown.csv"
+
     print(f"\nReading CSV files...")
     print(f"  Phase 5 dir: {phase5_dir}")
     print(f"  Phase 6 dir: {phase6_dir}")
+    print(f"  Phase 8 dir: {phase8_dir}")
 
     # Read Phase 5 CSVs
     overview_df = _read_csv_safe(overview_path)
@@ -343,10 +357,18 @@ def main(config_path: str | None = None) -> None:
     radiation_post_df = _read_csv_safe(radiation_post_path)
     sct_post_df = _read_csv_safe(sct_post_path)
 
+    # Read Phase 8 CSVs
+    dx_enr_df = _read_csv_safe(dx_enr_path)
+    chemo_enr_df = _read_csv_safe(chemo_enr_path)
+    radiation_enr_df = _read_csv_safe(radiation_enr_path)
+    sct_enr_df = _read_csv_safe(sct_enr_path)
+    unknown_breakdown_df = _read_csv_safe(unknown_breakdown_path)
+
     # Check if we have any data
     all_dfs = [
         overview_df, chemo_df, radiation_df, sct_df,
-        combined_post_df, chemo_post_df, radiation_post_df, sct_post_df
+        combined_post_df, chemo_post_df, radiation_post_df, sct_post_df,
+        dx_enr_df, chemo_enr_df, radiation_enr_df, sct_enr_df, unknown_breakdown_df
     ]
     available_count = sum(1 for df in all_dfs if df is not None)
 
@@ -508,6 +530,77 @@ def main(config_path: str | None = None) -> None:
         )
         slide_count += 1
         print(f"  Slide {slide_count}: SCT post-treatment")
+
+    # Slide 10: DX Enrollment Comparison (Phase 8)
+    if dx_enr_df is not None:
+        n_pct_cols = [c for c in dx_enr_df.columns if c.endswith(" (N_Pct)")]
+        if n_pct_cols:
+            _add_table_slide(
+                prs,
+                "Diagnosis — Insurance by Enrollment Coverage",
+                "Payer at first HL diagnosis: patients with vs without enrollment covering \u00b130 day window",
+                dx_enr_df,
+                n_pct_cols
+            )
+            slide_count += 1
+            print(f"  Slide {slide_count}: DX enrollment comparison")
+
+    # Slide 11: Chemo Enrollment Comparison (Phase 8)
+    if chemo_enr_df is not None:
+        n_pct_cols = [c for c in chemo_enr_df.columns if c.endswith(" (N_Pct)")]
+        if n_pct_cols:
+            _add_table_slide(
+                prs,
+                "Chemotherapy — Insurance by Enrollment Coverage",
+                "Payer at first/last chemo: patients with vs without enrollment covering \u00b130 day window",
+                chemo_enr_df,
+                n_pct_cols
+            )
+            slide_count += 1
+            print(f"  Slide {slide_count}: Chemo enrollment comparison")
+
+    # Slide 12: Radiation Enrollment Comparison (Phase 8)
+    if radiation_enr_df is not None:
+        n_pct_cols = [c for c in radiation_enr_df.columns if c.endswith(" (N_Pct)")]
+        if n_pct_cols:
+            _add_table_slide(
+                prs,
+                "Radiation — Insurance by Enrollment Coverage",
+                "Payer at first/last radiation: patients with vs without enrollment covering \u00b130 day window",
+                radiation_enr_df,
+                n_pct_cols
+            )
+            slide_count += 1
+            print(f"  Slide {slide_count}: Radiation enrollment comparison")
+
+    # Slide 13: SCT Enrollment Comparison (Phase 8)
+    if sct_enr_df is not None:
+        n_pct_cols = [c for c in sct_enr_df.columns if c.endswith(" (N_Pct)")]
+        if n_pct_cols:
+            _add_table_slide(
+                prs,
+                "SCT — Insurance by Enrollment Coverage",
+                "Payer at first/last SCT: patients with vs without enrollment covering \u00b130 day window",
+                sct_enr_df,
+                n_pct_cols
+            )
+            slide_count += 1
+            print(f"  Slide {slide_count}: SCT enrollment comparison")
+
+    # Slide 14: Unknown Post-Treatment Encounter Breakdown (Phase 8)
+    if unknown_breakdown_df is not None:
+        n_pct_cols = [c for c in unknown_breakdown_df.columns if c.endswith(" (N_Pct)")]
+        if n_pct_cols:
+            _add_table_slide(
+                prs,
+                "Unknown Post-Treatment Payer — Encounter Breakdown",
+                "Patients with Unknown post-treatment payer: how many encounters exist after last treatment?",
+                unknown_breakdown_df,
+                n_pct_cols,
+                payer_col="Encounter Count Bin"
+            )
+            slide_count += 1
+            print(f"  Slide {slide_count}: Unknown post-treatment breakdown")
 
     # Save presentation
     output_dir = PROJECT_ROOT / "reports"
