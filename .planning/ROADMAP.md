@@ -147,3 +147,21 @@ Plans:
 
 Plans:
 - [ ] 07-01-PLAN.md — Build UF-branded PowerPoint presentation from Phase 5/6 insurance CSVs
+
+### Phase 8: look at insurance in treatment windows but do a comparison of people whose ENR dates where within the timeframe vs those that weren't
+
+**Goal:** Compare insurance coverage patterns between patients whose ENROLLMENT dates fully cover the +/-30 day treatment window vs those whose enrollment does not, producing side-by-side comparison tables for each treatment type plus a diagnostic breakdown of Unknown post-treatment payer patients
+**Depends on:** Phase 7
+**Requirements**: D-01 through D-23 (defined by CONTEXT.md decisions; extends beyond v1 requirements)
+**Success Criteria** (what must be TRUE):
+  1. New `scripts/build_insurance_enr_comparison.py` checks enrollment coverage using union-of-periods algorithm for 7 treatment windows
+  2. Four comparison tables (DX 2-column, Chemo 4-column, Radiation 4-column, SCT 4-column) showing payer distributions split by enrollment coverage
+  3. Diagnostic breakdown table showing Unknown post-treatment payer patients grouped by post-treatment encounter count (0, 1-5, 6-10, 11-20, 21+)
+  4. All tables output in 3 formats: color-coded PNG (matching Phase 5/6 style), CSV + markdown, and styled HTML
+  5. No HIPAA small-cell suppression applied (internal working tables)
+  6. All Phase 8 tables added as slides to the existing PowerPoint presentation with UF Health branding
+**Plans:** 2 plans in 2 waves
+
+Plans:
+- [ ] 08-01-PLAN.md — Core enrollment comparison script with ENR coverage logic, comparison tables, Unknown breakdown, CSV/PNG/HTML/markdown outputs
+- [ ] 08-02-PLAN.md — Add Phase 8 slides to existing PowerPoint presentation
