@@ -165,3 +165,19 @@ Plans:
 Plans:
 - [ ] 08-01-PLAN.md — Core enrollment comparison script with ENR coverage logic, comparison tables, Unknown breakdown, CSV/PNG/HTML/markdown outputs
 - [ ] 08-02-PLAN.md — Add Phase 8 slides to existing PowerPoint presentation
+
+### Phase 9: Investigate unknown/unavailable insurance in enrollment windows and post-treatment encounters
+
+**Goal:** Diagnostic investigation answering 5 questions about Unknown and Unavailable insurance patients — enrollment coverage cross-references, post-treatment encounter gap analysis per treatment type, and SCT primary Unknown discrepancy trace
+**Depends on:** Phase 8
+**Requirements**: DIAG-01, DIAG-02, DIAG-03, DIAG-04, DIAG-05
+**Success Criteria** (what must be TRUE):
+  1. Diagnostic script cross-references enrollment coverage for Unknown/Unavailable patients at treatment windows, showing ENR covers vs ENR gap counts for chemo, radiation, SCT (DIAG-01)
+  2. For Unknown and Unavailable chemo post-treatment patients, report shows % with zero encounters after LAST_CHEMO_DATE with encounter count distribution (DIAG-02)
+  3. For Unknown and Unavailable radiation post-treatment patients, report shows % with zero encounters after LAST_RADIATION_DATE with encounter count distribution (DIAG-03)
+  4. For Unknown and Unavailable SCT post-treatment patients, report shows % with zero encounters after LAST_SCT_DATE with encounter count distribution (DIAG-04)
+  5. Patient-level trace for 4 SCT patients with primary Unknown explains mechanism causing first/last SCT payer to be non-Unknown (DIAG-05)
+**Plans:** 1 plan in 1 wave
+
+Plans:
+- [ ] 09-01-PLAN.md — Diagnostic script answering 5 insurance questions with console output and structured markdown report
