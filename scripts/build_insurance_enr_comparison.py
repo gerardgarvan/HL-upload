@@ -821,10 +821,10 @@ def main(config_path=None):
     print("=" * 70)
 
     # Load config
-    config = load_and_validate_config(config_path)
-    derived_dir = Path(config["derived_data_dir"])
-    clean_dir = Path(config["clean_data_dir"])
-    report_dir = Path(config["report_dir"])
+    paths = load_and_validate_config(config_path)
+    derived_dir = paths.derived_dir
+    clean_dir = paths.parquet_dir
+    report_dir = PROJECT_ROOT / "reports"
 
     # Create output directory
     output_dir = report_dir / "insurance_enr_comparison"
