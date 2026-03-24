@@ -256,7 +256,12 @@ def _get_first_hl_dx_dates(table_map: dict[str, Path], ids: pl.Series) -> pl.Dat
 
 
 def _get_chemo_dates(table_map: dict[str, Path], ids: pl.Series) -> pl.DataFrame | None:
-    """First and last chemo date per patient. Sources: TR DT_CHEMO, CHEMO_START_DATE_SUMMARY, PRESCRIBING RX_ORDER_DATE."""
+    """First and last chemo date per patient.
+
+    Sources:
+    - Tumor registry: DT_CHEMO, CHEMO_START_DATE_SUMMARY
+    - Prescribing: RX_ORDER_DATE, RX_START_DATE (if present)
+    """
     chemo_frames: list[pl.DataFrame] = []
     tr_cols = ["DT_CHEMO", "CHEMO_START_DATE_SUMMARY"]
     for tr_name in sorted(TUMOR_REGISTRY_TABLES):
@@ -295,17 +300,20 @@ def _get_chemo_dates(table_map: dict[str, Path], ids: pl.Series) -> pl.DataFrame
     rx_path = table_map.get("PRESCRIBING")
     if rx_path and rx_path.exists():
         rx_schema = pl.read_parquet_schema(rx_path)
-        if "RX_ORDER_DATE" in rx_schema.names():
+        rx_cols = [c for c in ["RX_ORDER_DATE", "RX_START_DATE"] if c in rx_schema.names()]
+        if rx_cols:
             rx = (
                 pl.scan_parquet(rx_path)
                 .with_columns(pl.col(PATID_COL).cast(pl.String))
                 .filter(pl.col(PATID_COL).is_in(ids.implode()))
-                .filter(pl.col("RX_ORDER_DATE").is_not_null())
-                .select(PATID_COL, pl.col("RX_ORDER_DATE").alias("_chemo_d"))
+                .select([PATID_COL] + rx_cols)
                 .collect()
             )
             if not rx.is_empty():
-                chemo_frames.append(rx)
+                for col in rx_cols:
+                    rc = rx.filter(pl.col(col).is_not_null()).select(PATID_COL, pl.col(col).alias("_chemo_d"))
+                    if not rc.is_empty():
+                        chemo_frames.append(rc)
     if not chemo_frames:
         return None
     all_chemo = pl.concat(chemo_frames)
@@ -316,39 +324,47 @@ def _get_chemo_dates(table_map: dict[str, Path], ids: pl.Series) -> pl.DataFrame
 
 
 def _get_radiation_dates(table_map: dict[str, Path], ids: pl.Series) -> pl.DataFrame | None:
-    """First and last radiation date per patient. Sources: TR DT_RAD, PROCEDURES (radiation CPTs)."""
+    """First and last radiation date per patient.
+
+    Sources:
+    - Tumor registry: DT_RAD, RAD_START_DATE_SUMMARY
+    - Procedures: radiation CPTs with PX_DATE
+    """
     rad_frames: list[pl.DataFrame] = []
+    tr_cols = ["DT_RAD", "RAD_START_DATE_SUMMARY"]
     for tr_name in sorted(TUMOR_REGISTRY_TABLES):
         tr_path = table_map.get(tr_name)
         if not tr_path or not tr_path.exists():
             continue
         schema = pl.read_parquet_schema(tr_path)
-        if "DT_RAD" not in schema.names():
+        available = [c for c in tr_cols if c in schema.names()]
+        if not available:
             continue
         tr = (
             pl.scan_parquet(tr_path)
             .with_columns(pl.col(PATID_COL).cast(pl.String))
             .filter(pl.col(PATID_COL).is_in(ids.implode()))
-            .select(PATID_COL, "DT_RAD")
+            .select([PATID_COL] + available)
             .collect()
         )
         if tr.is_empty():
             continue
-        col = "DT_RAD"
-        if tr[col].dtype in (pl.String, pl.Utf8):
-            tr = tr.with_columns(
-                pl.col(col)
-                .str.to_date("%Y.%m.%d", strict=False)
-                .fill_null(pl.col(col).str.to_date("%m/%d/%Y", strict=False))
-                .fill_null(pl.col(col).str.to_date("%d%b%Y", strict=False))
-                .fill_null(pl.col(col).str.to_date("%Y%m%d", strict=False))
-                .alias("_d")
-            )
-        else:
-            tr = tr.with_columns(pl.col(col).alias("_d"))
-        tc = tr.filter(pl.col("_d").is_not_null()).select(PATID_COL, pl.col("_d").alias("_rad_d"))
-        if not tc.is_empty():
-            rad_frames.append(tc)
+        for col in available:
+            if tr[col].dtype in (pl.String, pl.Utf8):
+                tr = tr.with_columns(
+                    pl.col(col)
+                    .str.to_date("%Y.%m.%d", strict=False)
+                    .fill_null(pl.col(col).str.to_date("%m/%d/%Y", strict=False))
+                    .fill_null(pl.col(col).str.to_date("%d%b%Y", strict=False))
+                    .fill_null(pl.col(col).str.to_date("%Y%m%d", strict=False))
+                    .alias("_d")
+                )
+            else:
+                tr = tr.with_columns(pl.col(col).alias("_d"))
+            tc = tr.filter(pl.col("_d").is_not_null()).select(PATID_COL, pl.col("_d").alias("_rad_d"))
+            if not tc.is_empty():
+                rad_frames.append(tc)
+            tr = tr.drop("_d")
     px_path = table_map.get("PROCEDURES")
     if px_path and px_path.exists():
         px_schema = pl.read_parquet_schema(px_path)
@@ -374,27 +390,72 @@ def _get_radiation_dates(table_map: dict[str, Path], ids: pl.Series) -> pl.DataF
 
 
 def _get_sct_dates(table_map: dict[str, Path], ids: pl.Series) -> pl.DataFrame | None:
-    """First and last stem cell transplant procedure date per patient. Source: PROCEDURES (SCT CPTs)."""
+    """First and last stem cell transplant date per patient.
+
+    Sources:
+    - Procedures: SCT CPTs with PX_DATE
+    - Tumor registry candidate columns (if present): DT_SCT, SCT_DATE, BMT_DATE, TRANSPLANT_DATE,
+      HCT_DATE, DT_TRANSPLANT
+    """
+    sct_frames: list[pl.DataFrame] = []
+
     px_path = table_map.get("PROCEDURES")
-    if not px_path or not px_path.exists():
+    if px_path and px_path.exists():
+        px_schema = pl.read_parquet_schema(px_path)
+        if "PX" in px_schema.names() and "PX_DATE" in px_schema.names():
+            px = (
+                pl.scan_parquet(px_path)
+                .with_columns(pl.col(PATID_COL).cast(pl.String))
+                .filter(pl.col(PATID_COL).is_in(ids.implode()))
+                .filter(pl.col("PX").cast(pl.Utf8).is_in(list(SCT_CPTS)))
+                .filter(pl.col("PX_DATE").is_not_null())
+                .select(PATID_COL, pl.col("PX_DATE").alias("_sct_d"))
+                .collect()
+            )
+            if not px.is_empty():
+                sct_frames.append(px)
+
+    tr_sct_cols = ["DT_SCT", "SCT_DATE", "BMT_DATE", "TRANSPLANT_DATE", "HCT_DATE", "DT_TRANSPLANT"]
+    for tr_name in sorted(TUMOR_REGISTRY_TABLES):
+        tr_path = table_map.get(tr_name)
+        if not tr_path or not tr_path.exists():
+            continue
+        schema = pl.read_parquet_schema(tr_path)
+        available = [c for c in tr_sct_cols if c in schema.names()]
+        if not available:
+            continue
+        tr = (
+            pl.scan_parquet(tr_path)
+            .with_columns(pl.col(PATID_COL).cast(pl.String))
+            .filter(pl.col(PATID_COL).is_in(ids.implode()))
+            .select([PATID_COL] + available)
+            .collect()
+        )
+        if tr.is_empty():
+            continue
+        for col in available:
+            if tr[col].dtype in (pl.String, pl.Utf8):
+                tr = tr.with_columns(
+                    pl.col(col)
+                    .str.to_date("%Y.%m.%d", strict=False)
+                    .fill_null(pl.col(col).str.to_date("%m/%d/%Y", strict=False))
+                    .fill_null(pl.col(col).str.to_date("%d%b%Y", strict=False))
+                    .fill_null(pl.col(col).str.to_date("%Y%m%d", strict=False))
+                    .alias("_d")
+                )
+            else:
+                tr = tr.with_columns(pl.col(col).alias("_d"))
+            tc = tr.filter(pl.col("_d").is_not_null()).select(PATID_COL, pl.col("_d").alias("_sct_d"))
+            if not tc.is_empty():
+                sct_frames.append(tc)
+            tr = tr.drop("_d")
+
+    if not sct_frames:
         return None
-    px_schema = pl.read_parquet_schema(px_path)
-    if "PX" not in px_schema.names() or "PX_DATE" not in px_schema.names():
-        return None
-    px = (
-        pl.scan_parquet(px_path)
-        .with_columns(pl.col(PATID_COL).cast(pl.String))
-        .filter(pl.col(PATID_COL).is_in(ids.implode()))
-        .filter(pl.col("PX").cast(pl.Utf8).is_in(list(SCT_CPTS)))
-        .filter(pl.col("PX_DATE").is_not_null())
-        .select(PATID_COL, "PX_DATE")
-        .collect()
-    )
-    if px.is_empty():
-        return None
-    return px.group_by(PATID_COL).agg(
-        pl.col("PX_DATE").min().alias("FIRST_SCT_DATE"),
-        pl.col("PX_DATE").max().alias("LAST_SCT_DATE"),
+    all_sct = pl.concat(sct_frames)
+    return all_sct.group_by(PATID_COL).agg(
+        pl.col("_sct_d").min().alias("FIRST_SCT_DATE"),
+        pl.col("_sct_d").max().alias("LAST_SCT_DATE"),
     )
 
 
